@@ -1,0 +1,67 @@
+services:
+  node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/usr/local/bin/chipcoin-entrypoint", "node"]
+    environment:
+      TZ: Europe/Rome
+      CHIPCOIN_NETWORK: ${CHIPCOIN_NETWORK}
+      CHIPCOIN_RUNTIME_DIR: ${CHIPCOIN_RUNTIME_DIR:-}
+      NODE_LOG_LEVEL: ${NODE_LOG_LEVEL}
+      NODE_P2P_BIND_PORT: ${NODE_P2P_BIND_PORT}
+      NODE_HTTP_BIND_PORT: ${NODE_HTTP_BIND_PORT}
+      CHIPCOIN_HTTP_ALLOWED_ORIGINS: ${CHIPCOIN_HTTP_ALLOWED_ORIGINS:-}
+      DIRECT_PEER: ${DIRECT_PEER:-}
+      BOOTSTRAP_URL: ${BOOTSTRAP_URL:-}
+    ports:
+      - "${NODE_P2P_BIND_PORT}:${NODE_P2P_BIND_PORT}"
+      - "${NODE_HTTP_BIND_PORT}:${NODE_HTTP_BIND_PORT}"
+    volumes:
+      - type: bind
+        source: ${NODE_DATA_PATH}
+        target: /runtime/node.sqlite3
+    restart: unless-stopped
+
+  explorer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "http.server", "4173", "--directory", "/srv/explorer"]
+    environment:
+      TZ: Europe/Rome
+      CHIPCOIN_RUNTIME_DIR: ${CHIPCOIN_RUNTIME_DIR:-}
+    ports:
+      - "${EXPLORER_PORT:-4173}:4173"
+    volumes:
+      - type: bind
+        source: ${EXPLORER_DIST_PATH:-./apps/explorer/dist}
+        target: /srv/explorer
+        read_only: true
+    restart: unless-stopped
+
+  miner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/usr/local/bin/chipcoin-entrypoint", "miner"]
+    environment:
+      TZ: Europe/Rome
+      CHIPCOIN_NETWORK: ${CHIPCOIN_NETWORK}
+      CHIPCOIN_RUNTIME_DIR: ${CHIPCOIN_RUNTIME_DIR:-}
+      MINER_LOG_LEVEL: ${MINER_LOG_LEVEL}
+      MINER_P2P_BIND_PORT: ${MINER_P2P_BIND_PORT}
+      MINING_MIN_INTERVAL_SECONDS: ${MINING_MIN_INTERVAL_SECONDS}
+      DIRECT_PEER: ${DIRECT_PEER:-}
+      BOOTSTRAP_URL: ${BOOTSTRAP_URL:-}
+    ports:
+      - "${MINER_P2P_BIND_PORT}:${MINER_P2P_BIND_PORT}"
+    volumes:
+      - type: bind
+        source: ${MINER_DATA_PATH}
+        target: /runtime/miner.sqlite3
+      - type: bind
+        source: ${MINER_WALLET_FILE}
+        target: /runtime/miner-wallet.json
+        read_only: true
+    restart: unless-stopped

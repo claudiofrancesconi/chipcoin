@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Chipcoin Wallet",
+  "version": "0.1.0",
+  "description": "Chipcoin devnet browser wallet",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Chipcoin Wallet"
+  },
+  "background": {
+    "service_worker": "assets/background.js",
+    "type": "module"
+  },
+  "options_page": "settings.html",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["http://*/*", "https://*/*"]
+}

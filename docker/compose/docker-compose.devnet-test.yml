@@ -1,0 +1,95 @@
+services:
+  node-a:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: chipcoin-node-a
+    command:
+      [
+        "chipcoin",
+        "--network",
+        "devnet",
+        "--log-level",
+        "INFO",
+        "--data",
+        "/data/node-a-devnet.sqlite3",
+        "run",
+        "--listen-host",
+        "0.0.0.0",
+        "--listen-port",
+        "18444"
+      ]
+    volumes:
+      - node_a_data:/data
+    ports:
+      - "18444:18444"
+    restart: unless-stopped
+
+  node-b:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: chipcoin-node-b
+    command:
+      [
+        "chipcoin",
+        "--network",
+        "devnet",
+        "--log-level",
+        "INFO",
+        "--data",
+        "/data/node-b-devnet.sqlite3",
+        "run",
+        "--listen-host",
+        "0.0.0.0",
+        "--listen-port",
+        "18445",
+        "--peer",
+        "node-a:18444"
+      ]
+    volumes:
+      - node_b_data:/data
+    ports:
+      - "18445:18445"
+    depends_on:
+      - node-a
+    restart: unless-stopped
+
+  miner:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: chipcoin-miner
+    command:
+      [
+        "chipcoin",
+        "--network",
+        "devnet",
+        "--log-level",
+        "INFO",
+        "--data",
+        "/data/miner-devnet.sqlite3",
+        "mine",
+        "--listen-host",
+        "0.0.0.0",
+        "--listen-port",
+        "18446",
+        "--peer",
+        "node-a:18444",
+        "--miner-address",
+        "CHCCXakSkRDA63xWXKo2wEmrKvr9JeDzdoic3",
+        "--mining-min-interval-seconds",
+        "1.0"
+      ]
+    volumes:
+      - miner_data:/data
+    ports:
+      - "18446:18446"
+    depends_on:
+      - node-a
+    restart: unless-stopped
+
+volumes:
+  node_a_data:
+  node_b_data:
+  miner_data:

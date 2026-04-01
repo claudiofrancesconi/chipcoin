@@ -1,0 +1,231 @@
+:root {
+  color: #f4efe8;
+  background: linear-gradient(180deg, #1f2c25 0%, #142018 100%);
+  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+}
+
+body {
+  margin: 0;
+  min-width: 360px;
+  background: radial-gradient(circle at top, rgba(224, 187, 120, 0.14), transparent 36%), #101712;
+}
+
+button,
+input,
+textarea,
+a {
+  font: inherit;
+}
+
+.app-shell {
+  padding: 16px;
+}
+
+.app-shell h1 {
+  margin: 0 0 12px;
+  color: #f6e7c8;
+}
+
+.panel {
+  background: rgba(26, 37, 31, 0.92);
+  border: 1px solid rgba(201, 169, 101, 0.22);
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+}
+
+.nav-tabs {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.nav-tabs.two-up {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.nav-tabs button,
+.primary-button,
+.secondary-button,
+.danger-button,
+.button-link,
+.panel button {
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  padding: 10px 12px;
+  text-decoration: none;
+}
+
+.nav-tabs button,
+.panel button {
+  background: #2a3a31;
+  color: #f4efe8;
+}
+
+.panel button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.nav-tabs .is-active,
+.primary-button {
+  background: linear-gradient(135deg, #d8a84c 0%, #b67b1e 100%);
+  color: #1e1507;
+  font-weight: 700;
+}
+
+.danger-button {
+  background: #7a2e2e;
+  color: #fff4f4;
+}
+
+.secondary-button {
+  background: #32443a;
+  color: #eff7f0;
+}
+
+.button-link {
+  display: inline-block;
+  background: linear-gradient(135deg, #d8a84c 0%, #b67b1e 100%);
+  color: #1e1507;
+  font-weight: 700;
+}
+
+.stack {
+  display: grid;
+  gap: 10px;
+}
+
+.inline-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.checkbox-row input {
+  width: auto;
+  margin-top: 2px;
+}
+
+.warning-panel {
+  background: rgba(122, 46, 46, 0.18);
+  border: 1px solid rgba(255, 179, 179, 0.24);
+  border-radius: 12px;
+  color: #ffe3e3;
+  margin-bottom: 12px;
+  padding: 12px;
+}
+
+.warning-panel p {
+  margin: 0 0 8px;
+}
+
+.warning-panel p:last-child {
+  margin-bottom: 0;
+}
+
+.inline-row p {
+  margin: 0;
+  min-width: 0;
+  flex: 1;
+}
+
+input,
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: #101712;
+  border: 1px solid rgba(201, 169, 101, 0.32);
+  border-radius: 10px;
+  color: #f4efe8;
+  padding: 10px 12px;
+}
+
+.secret-box {
+  min-height: 100px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.message {
+  color: #d8cfbf;
+}
+
+.message.error {
+  color: #ffb3b3;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+}
+
+.pill {
+  display: inline-block;
+  border-radius: 999px;
+  background: #2a3a31;
+  color: #f4efe8;
+  padding: 4px 10px;
+}
+
+.pill.success {
+  background: #1f5d3a;
+  color: #dcffe8;
+}
+
+.pill.warning {
+  background: #70431d;
+  color: #ffe4bb;
+}
+
+.metric-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.metric-card {
+  background: #18221c;
+  border: 1px solid rgba(201, 169, 101, 0.16);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.metric-card.highlight {
+  background: linear-gradient(135deg, rgba(216, 168, 76, 0.18), rgba(182, 123, 30, 0.1));
+  border-color: rgba(216, 168, 76, 0.38);
+}
+
+.metric-label {
+  display: block;
+  color: #cbbfa8;
+  font-size: 12px;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.activity-list {
+  display: grid;
+  gap: 8px;
+  padding-left: 18px;
+}
+
+.tx-link {
+  color: #f6d28f;
+}
+
+.tx-link:hover {
+  color: #ffe3b6;
+}
