@@ -97,7 +97,7 @@ Details:
 
 ```bash
 git clone <repo-url>
-cd Chipcoin-v2
+cd chipcoin
 cp .env.example .env
 ```
 
@@ -214,7 +214,7 @@ The repository should stay clean and publishable. Real runtime state should live
 
 Recommended layout:
 
-- repository: `~/src/Chipcoin-v2`
+- repository: `~/src/chipcoin`
 - runtime directory: `/home/komarek/Chipcoin-runtime`
 
 Setup:

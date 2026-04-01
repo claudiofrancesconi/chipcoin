@@ -6,7 +6,7 @@ This checklist is for verifying the public repository from a fresh clone.
 
 ```bash
 git clone <repo-url>
-cd Chipcoin-v2
+cd chipcoin
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .[dev]
