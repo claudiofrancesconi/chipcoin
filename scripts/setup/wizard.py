@@ -241,7 +241,9 @@ def _print_success(
         "miner": "miner",
         "both": "node miner",
     }[role]
-    compose_up = f"docker compose up {'-d ' if runtime_mode == 'background' else ''}{command_suffix}".replace("  ", " ").strip()
+    compose_up_foreground = f"docker compose up {command_suffix}".strip()
+    compose_up_background = f"docker compose up -d {command_suffix}".strip()
+    recommended_compose_up = compose_up_background if runtime_mode == "background" else compose_up_foreground
 
     print()
     print("Setup completed successfully.")
@@ -268,7 +270,8 @@ def _print_success(
         print("Default explorer URL: none")
     print()
     print("Next commands:")
-    print(f"  {compose_up}")
+    print(f"  {recommended_compose_up}")
+    print(f"  {compose_up_background}  (for background launch)")
     print("  docker compose logs -f")
     print("  docker compose ps")
     print("  docker compose down")
