@@ -84,6 +84,8 @@ In `.env.example`, that fallback is set to the public devnet node:
 
 - `http://tiltmediaconsulting.com:8081`
 
+Public devnet endpoints are provided for convenience and may change or become unavailable.
+
 To use a different node:
 
 1. Open the wallet popup

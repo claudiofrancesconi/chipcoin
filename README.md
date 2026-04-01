@@ -17,6 +17,7 @@ Public devnet fallback defaults included in `.env.example`:
 - explorer URL: `http://tiltmediaconsulting.com:4173`
 
 These are fallback defaults only. They are not required and can be replaced with your own node, peer, and inspection tooling.
+Public devnet endpoints are provided for convenience and may change or become unavailable.
 
 ## Current Status
 
