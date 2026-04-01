@@ -471,13 +471,7 @@ class NodeRuntime:
                 await self._request_headers(session)
                 return
             if ingest.missing_block_hashes:
-                self._begin_sync_tracking(
-                    session,
-                    max(
-                        self._sync_target_height(session),
-                        0 if self.service.chain_tip() is None else self.service.chain_tip().height + len(ingest.missing_block_hashes),
-                    ),
-                )
+                self._begin_sync_tracking(session, self._sync_target_height(session))
                 self._log_sync_progress(session, force=True)
                 self.logger.info(
                     "sync requesting blocks peer=%s count=%s first=%s last=%s",
