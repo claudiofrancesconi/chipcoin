@@ -29,6 +29,7 @@ chipcoin wallet-generate --wallet-file /path/to/Chipcoin-runtime/wallets/chipcoi
 Checks:
 
 - `.env` exists locally only
+- placeholder paths from `.env.example` have been replaced with real local paths before `docker compose up`
 - wallet file is outside version control
 
 ## Node And Miner
@@ -43,6 +44,7 @@ Checks:
 - `docker compose logs -f node`
 - `docker compose logs -f miner`
 - `curl http://127.0.0.1:8081/v1/status`
+- the node and miner containers are using runtime files outside the repository
 
 ## Browser Wallet
 
@@ -69,3 +71,4 @@ Checks:
 - a transaction can be sent
 - the transaction appears through the node API
 - the transaction can later be observed by the user in their chosen inspection tooling
+- any failure in this section is treated as a documentation or onboarding gap until proven otherwise

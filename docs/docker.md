@@ -33,7 +33,6 @@ Relevant `.env` keys:
 - `NODE_DATA_PATH`
 - `MINER_DATA_PATH`
 - `MINER_WALLET_FILE`
-- `EXPLORER_DIST_PATH`
 
 ## Start
 

@@ -23,23 +23,6 @@ services:
         target: /runtime/node.sqlite3
     restart: unless-stopped
 
-  explorer:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: ["python", "-m", "http.server", "4173", "--directory", "/srv/explorer"]
-    environment:
-      TZ: Europe/Rome
-      CHIPCOIN_RUNTIME_DIR: ${CHIPCOIN_RUNTIME_DIR:-}
-    ports:
-      - "${EXPLORER_PORT:-4173}:4173"
-    volumes:
-      - type: bind
-        source: ${EXPLORER_DIST_PATH:-./apps/explorer/dist}
-        target: /srv/explorer
-        read_only: true
-    restart: unless-stopped
-
   miner:
     build:
       context: .
