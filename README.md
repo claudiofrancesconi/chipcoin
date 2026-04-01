@@ -52,6 +52,39 @@ Relevant public areas:
 
 Operator-only or internal material may still exist in the tree, but it is not part of the primary public onboarding path.
 
+## System Requirements
+
+Documented and conservatively validated baseline:
+
+- Host OS: Linux on x86_64 for the documented clone-to-run path
+- Docker: Docker Engine with the `docker compose` plugin
+- Python: 3.11+
+- Node.js: 20+
+- npm: current npm bundled with Node.js 20+
+- Browsers: recent desktop Chrome and Firefox for the browser wallet flows
+
+Minimum guidance for a local devnet node + miner setup:
+
+- 2 CPU cores
+- 4 GB RAM
+- 5 GB free disk space
+
+Recommended guidance:
+
+- 4 CPU cores
+- 8 GB RAM
+- 10 GB free disk space
+
+Important limits:
+
+- macOS and Windows are not part of the documented clean-install validation path yet
+- Firefox support is documented through the temporary add-on workflow, not a signed distribution flow
+- public devnet endpoints are convenience defaults, not availability guarantees
+
+Details:
+
+- `docs/system-requirements.md`
+
 ## Quick Start
 
 ### Prerequisites
@@ -86,6 +119,38 @@ If you want a fully local first run, set:
 - `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT=http://127.0.0.1:8081`
 
 This starts an isolated local node/miner pair and avoids any external bootstrap dependency in the first-user path.
+
+## Setup Wizard
+
+If you want a guided setup instead of editing `.env` manually, use:
+
+```bash
+python3 scripts/setup/wizard.py
+```
+
+Available modes:
+
+- `Quick start`
+  Uses the public devnet defaults for node endpoint, bootstrap peer, and explorer URL.
+- `Custom configuration`
+  Prompts for node endpoint, bootstrap peer, and explorer URL, then writes them into `.env`.
+- `Local/self-hosted`
+  Uses `http://127.0.0.1:8081`, leaves bootstrap empty, and does not depend on public endpoints.
+
+Use the wizard when:
+
+- you want a fast first-run path
+- you prefer guided prompts over manual `.env` editing
+
+Use the manual setup flow when:
+
+- you want full control over every runtime path and setting
+- you are reviewing the configuration line by line
+- you are integrating Chipcoin into an existing local environment
+
+Details:
+
+- `docs/setup-wizard.md`
 
 ### Create A Miner Wallet
 
@@ -231,6 +296,8 @@ The shortest supported path from clone to a working local stack is:
 - `docs/node.md`
 - `docs/miner.md`
 - `docs/browser-wallet.md`
+- `docs/setup-wizard.md`
+- `docs/system-requirements.md`
 - `docs/publication-checklist.md`
 - `docs/clean-install-checklist.md`
 - `docs/protocol.md`
