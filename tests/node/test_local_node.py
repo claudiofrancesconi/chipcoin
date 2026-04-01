@@ -494,6 +494,46 @@ def test_runtime_drops_session_after_reaching_ping_failure_threshold() -> None:
     asyncio.run(scenario())
 
 
+def test_runtime_pauses_mining_until_initial_sync_is_caught_up() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(
+            service=service,
+            listen_host="127.0.0.1",
+            listen_port=18445,
+            miner_address="CHCminer-runtime",
+            outbound_peers=[OutboundPeer("tiltmediaconsulting.com", 18444)],
+        )
+
+        class _FakeRemote:
+            start_height = 5
+
+        class _FakeState:
+            closed = False
+            handshake_complete = True
+            remote_version = _FakeRemote()
+
+        class _FakeSession:
+            state = _FakeState()
+
+        session = _FakeSession()
+        runtime._sessions[session] = SessionHandle(
+            protocol=session,
+            outbound=True,
+            endpoint=OutboundPeer("tiltmediaconsulting.com", 18444),
+        )
+
+        assert runtime._mining_ready_for_work() is False
+
+        for _ in range(6):
+            block = _mine_block(service.build_candidate_block("CHCminer-runtime").block)
+            service.apply_block(block)
+
+        assert service.chain_tip() is not None
+        assert service.chain_tip().height == 5
+        assert runtime._mining_ready_for_work() is True
+
+
 def test_node_service_accepts_transaction_and_builds_candidate_block() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")

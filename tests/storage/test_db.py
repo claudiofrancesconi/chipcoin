@@ -1,8 +1,8 @@
+from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
-from pathlib import Path
 
-from chipcoin.storage.db import initialize_database
+from chipcoin.storage.db import _ensure_column, initialize_database
 
 
 def test_initialize_database_creates_expected_tables() -> None:
@@ -32,3 +32,19 @@ def test_initialize_database_returns_sqlite_connection() -> None:
             assert isinstance(connection, sqlite3.Connection)
         finally:
             connection.close()
+
+
+def test_ensure_column_ignores_duplicate_column_race() -> None:
+    class _Cursor:
+        def fetchall(self):
+            return []
+
+    class _Connection:
+        def execute(self, statement: str):
+            if statement.startswith("PRAGMA table_info("):
+                return _Cursor()
+            if statement.startswith("ALTER TABLE peers ADD COLUMN last_seen"):
+                raise sqlite3.OperationalError("duplicate column name: last_seen")
+            raise AssertionError(f"unexpected statement: {statement}")
+
+    _ensure_column(_Connection(), table="peers", column="last_seen", definition="INTEGER")

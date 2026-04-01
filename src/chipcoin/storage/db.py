@@ -122,4 +122,10 @@ def _ensure_column(connection: sqlite3.Connection, *, table: str, column: str, d
     existing_columns = {row["name"] for row in rows}
     if column in existing_columns:
         return
-    connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    try:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    except sqlite3.OperationalError as exc:
+        # Two local processes can initialize the same database concurrently
+        # during container startup. Treat duplicate-column races as success.
+        if f"duplicate column name: {column}" not in str(exc).lower():
+            raise

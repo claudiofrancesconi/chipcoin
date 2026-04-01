@@ -122,6 +122,7 @@ class NodeRuntime:
         self._mining_nonce_cursor = 0
         self._mining_template = None
         self._last_mined_monotonic: float | None = None
+        self._mining_wait_logged = False
         self._relayed_mempool_txids: set[str] = set()
 
     @property
@@ -1193,6 +1194,9 @@ class NodeRuntime:
 
         assert self.miner_address is not None
         while self._running:
+            if not self._mining_ready_for_work():
+                await asyncio.sleep(self.mining_idle_interval)
+                continue
             await self._wait_for_next_mining_slot()
             template = self._refresh_mining_template()
             if template is None:
@@ -1229,6 +1233,44 @@ class NodeRuntime:
             self._mining_template_key = template_key
             self._mining_nonce_cursor = 0
         return self._mining_template
+
+    def _mining_ready_for_work(self) -> bool:
+        """Return whether the miner should start or resume local mining."""
+
+        if self.miner_address is None:
+            return False
+
+        local_tip = self.service.chain_tip()
+        local_height = -1 if local_tip is None else local_tip.height
+        active_remote_heights = [
+            remote.start_height
+            for protocol in self._sessions
+            if protocol.state.handshake_complete and not protocol.state.closed
+            for remote in [protocol.state.remote_version]
+            if remote is not None
+        ]
+
+        if self._desired_outbound_peers() and not active_remote_heights:
+            if not self._mining_wait_logged:
+                self.logger.info("mining paused reason=awaiting_initial_peer_sync local_height=%s", local_height)
+                self._mining_wait_logged = True
+            return False
+
+        max_remote_height = max(active_remote_heights, default=local_height)
+        if max_remote_height > local_height:
+            if not self._mining_wait_logged:
+                self.logger.info(
+                    "mining paused reason=chain_not_synced local_height=%s remote_height=%s",
+                    local_height,
+                    max_remote_height,
+                )
+                self._mining_wait_logged = True
+            return False
+
+        if self._mining_wait_logged:
+            self.logger.info("mining resumed local_height=%s remote_height=%s", local_height, max_remote_height)
+            self._mining_wait_logged = False
+        return True
 
     def _invalidate_mining_template(self) -> None:
         """Drop the current mining template so the next loop rebuilds it."""
