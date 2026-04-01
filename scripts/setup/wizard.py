@@ -67,6 +67,7 @@ def main() -> int:
     role = _ask_choice("What do you want to run?", {"node": "Node", "miner": "Miner", "both": "Both"}, "both")
     network = _ask_choice("Which network do you want to use?", {"devnet": "Devnet"}, "devnet")
     runtime_mode = _ask_choice("How should services run?", {"foreground": "Foreground", "background": "Background"}, "foreground")
+    _print_public_reachability_note()
 
     wallet_path: Path | None = None
     wallet_address: str | None = None
@@ -174,6 +175,15 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str) -> None:
     env_values["DEFAULT_EXPLORER_URL"] = ""
     env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = "http://127.0.0.1:8081"
     env_values["DIRECT_PEER"] = ""
+
+
+def _print_public_reachability_note() -> None:
+    print()
+    print("Public reachability note:")
+    print("  - outbound-only nodes can still connect and sync")
+    print("  - publicly reachable nodes are strongly preferred for network health")
+    print("  - when possible, open and forward TCP 18444 for the node P2P listener")
+    print()
 
 
 def _prepare_wallet_path(wallet_path: Path) -> None:

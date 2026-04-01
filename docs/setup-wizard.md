@@ -60,6 +60,16 @@ This mode writes local-first defaults:
 
 Use it when you want a local node/miner stack without depending on public bootstrap or public inspection endpoints.
 
+## Public Reachability Note
+
+After you choose your node setup, keep this practical distinction in mind:
+
+- outbound-only nodes can still connect to the network and sync
+- publicly reachable nodes are strongly preferred for network health
+- when possible, open and forward `TCP 18444` so other peers can reach your node
+
+The wizard does not require public exposure, but public reachability is the main way an operator contributes an additional resilient peer to the mesh.
+
 ## Wallet Handling
 
 If you run `miner` or `both`, the wizard also offers:

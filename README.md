@@ -14,6 +14,7 @@ Public devnet fallback defaults included in `.env.example`:
 
 - node API: `http://tiltmediaconsulting.com:8081`
 - bootstrap peer: `tiltmediaconsulting.com:18444`
+- public P2P port: `18444/tcp`
 - explorer URL: `http://tiltmediaconsulting.com:4173`
 
 These are fallback defaults only. They are not required and can be replaced with your own node, peer, and inspection tooling.
@@ -120,6 +121,8 @@ If you want a fully local first run, set:
 
 This starts an isolated local node/miner pair and avoids any external bootstrap dependency in the first-user path.
 
+If you want your node to improve peer discovery and network resilience, keep `NODE_P2P_BIND_PORT=18444` and make that TCP port publicly reachable from the internet when your router and firewall policy allow it.
+
 ## Setup Wizard
 
 If you want a guided setup instead of editing `.env` manually, use:
@@ -151,6 +154,20 @@ Use the manual setup flow when:
 Details:
 
 - `docs/setup-wizard.md`
+
+### Public Node Reachability
+
+Nodes that do not expose `TCP 18444` can still connect outbound and participate in the devnet.
+
+However, outbound-only nodes do not materially improve peer discovery or overall network resilience because other peers cannot reliably dial them back.
+
+For best network health, operators should:
+
+- keep the public devnet P2P listener on `TCP 18444`
+- expose and forward `TCP 18444` when possible
+- ensure the announced endpoint is publicly reachable from outside the local network
+
+The HTTP/API port (`8081`) and explorer port (`4173`) are optional operator interfaces. They are not required for basic P2P participation.
 
 ### Create A Miner Wallet
 

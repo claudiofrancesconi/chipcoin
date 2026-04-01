@@ -69,6 +69,35 @@ Useful endpoints:
 - `GET /v1/mempool`
 - `GET /v1/peers/summary`
 
+## Public Reachability
+
+Public peer reachability is strongly recommended for healthy mesh behavior on the public devnet.
+
+Required for public peer reachability:
+
+- `TCP 18444` for the node P2P listener
+
+Optional operator interfaces:
+
+- `TCP 8081` for the HTTP API
+- `TCP 4173` for an explorer, if you run one
+
+Nodes that do not expose `TCP 18444` can still make outbound connections and sync normally, but they contribute less to peer discovery and network resilience because other peers cannot reliably initiate sessions back to them.
+
+Operational guidance:
+
+- set `NODE_P2P_BIND_PORT=18444`
+- allow `TCP 18444` through the host firewall
+- if the node sits behind NAT, forward external `TCP 18444` to the machine running the node
+- for home routers, prefer a stable local LAN IP for the node host before configuring port forwarding
+- verify that the endpoint other peers learn is your real public host and port
+
+Basic validation:
+
+- confirm the node is listening locally on `0.0.0.0:18444` or the intended bind address
+- test `TCP 18444` from an external machine or network, not only from localhost
+- confirm peers can connect inbound after router and firewall changes
+
 ## Notes
 
 - `DIRECT_PEER` can be used for explicit peering.
