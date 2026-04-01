@@ -57,8 +57,8 @@ class SessionHandle:
     announced_inventory_counts: dict[tuple[str, str], int] = field(default_factory=dict)
     consecutive_ping_failures: int = 0
     last_activity_at: float = 0.0
-    sync_start_height: int | None = None
     sync_target_height: int | None = None
+    sync_total_missing_blocks: int | None = None
     sync_next_log_height: int | None = None
 
 
@@ -471,7 +471,11 @@ class NodeRuntime:
                 await self._request_headers(session)
                 return
             if ingest.missing_block_hashes:
-                self._begin_sync_tracking(session, self._sync_target_height(session))
+                self._begin_sync_tracking(
+                    session,
+                    self._sync_target_height(session),
+                    total_missing_blocks=len(ingest.missing_block_hashes),
+                )
                 self._log_sync_progress(session, force=True)
                 self.logger.info(
                     "sync requesting blocks peer=%s count=%s first=%s last=%s",
@@ -966,7 +970,13 @@ class NodeRuntime:
             return False
         return (asyncio.get_running_loop().time() - handle.last_activity_at) < self.read_timeout
 
-    def _begin_sync_tracking(self, session: PeerProtocol, target_height: int) -> None:
+    def _begin_sync_tracking(
+        self,
+        session: PeerProtocol,
+        target_height: int,
+        *,
+        total_missing_blocks: int | None = None,
+    ) -> None:
         """Track one peer catch-up session so progress logs stay aggregated."""
 
         handle = self._sessions.get(session)
@@ -976,9 +986,10 @@ class NodeRuntime:
         local_height = -1 if local_tip is None else local_tip.height
         target_height = max(target_height, local_height)
         if handle.sync_target_height is None or target_height > handle.sync_target_height:
-            handle.sync_start_height = local_height
             handle.sync_target_height = target_height
-            handle.sync_next_log_height = min(target_height, local_height + self._SYNC_PROGRESS_LOG_INTERVAL)
+        if total_missing_blocks is not None:
+            handle.sync_total_missing_blocks = max(0, total_missing_blocks)
+        handle.sync_next_log_height = min(target_height, local_height + self._SYNC_PROGRESS_LOG_INTERVAL)
 
     def _sync_target_height(self, session: PeerProtocol) -> int:
         """Return the current sync target for one peer session."""
@@ -1014,18 +1025,21 @@ class NodeRuntime:
                     local_height,
                     target_height,
                 )
-            handle.sync_start_height = None
             handle.sync_target_height = None
+            handle.sync_total_missing_blocks = None
             handle.sync_next_log_height = None
             return
 
         if not force and handle.sync_next_log_height is not None and local_height < handle.sync_next_log_height:
             return
 
-        start_height = local_height if handle.sync_start_height is None else handle.sync_start_height
-        total_blocks = max(0, target_height - start_height)
-        synced_blocks = max(0, local_height - start_height)
         remaining_blocks = max(0, target_height - local_height)
+        total_blocks = (
+            max(0, handle.sync_total_missing_blocks)
+            if handle.sync_total_missing_blocks is not None
+            else remaining_blocks
+        )
+        synced_blocks = max(0, total_blocks - remaining_blocks)
         self.logger.info(
             "syncing blocks peer=%s synced=%s/%s local_height=%s target_height=%s remaining=%s",
             self._format_peer_for_logs(session),
