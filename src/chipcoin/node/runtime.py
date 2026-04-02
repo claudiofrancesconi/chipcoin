@@ -771,15 +771,16 @@ class NodeRuntime:
             accepted = 0
             for address in message.payload.addresses:
                 announced = OutboundPeer(address.host, address.port)
-                if self._is_local_listener_alias(announced):
+                canonical_announced = self._canonicalize_announced_peer_endpoint(announced)
+                if canonical_announced is None:
                     continue
-                if not self._is_announced_peer_dialable(announced):
+                if self._is_local_listener_alias(canonical_announced):
                     continue
-                if self._is_known_peer_alias(announced):
+                if self._is_known_peer_alias(canonical_announced):
                     continue
-                self._outbound_targets[(address.host, address.port)] = announced
-                self._outbound_target_sources[(address.host, address.port)] = "discovered"
-                self.service.add_peer(address.host, address.port, source="discovered")
+                self._outbound_targets[(canonical_announced.host, canonical_announced.port)] = canonical_announced
+                self._outbound_target_sources[(canonical_announced.host, canonical_announced.port)] = "discovered"
+                self.service.add_peer(canonical_announced.host, canonical_announced.port, source="discovered")
                 accepted += 1
             self._trim_peerbook_to_capacity()
             self.logger.debug("peer announced addresses count=%s accepted=%s", len(message.payload.addresses), accepted)
@@ -1287,7 +1288,17 @@ class NodeRuntime:
             return False
         if peer.source in {"manual", "seed"}:
             return self._is_valid_peer_host(peer.host)
+        if peer.source == "discovered":
+            return self._is_reusable_discovered_peer(peer) and self._is_persisted_peer_host_dialable(peer.host)
         return self._is_persisted_peer_host_dialable(peer.host)
+
+    def _is_reusable_discovered_peer(self, peer) -> bool:
+        """Return whether one discovered endpoint is reusable as a persisted peer candidate."""
+
+        default_port = get_network_config(peer.network).default_p2p_port
+        if peer.port == default_port:
+            return True
+        return peer.handshake_complete is True or (peer.success_count or 0) > 0
 
     def _is_persisted_peer_host_dialable(self, host: str) -> bool:
         """Return whether one persisted peer host should be reused for outbound dialing."""
@@ -1483,6 +1494,18 @@ class NodeRuntime:
             return False
         return self._is_persisted_peer_host_dialable(peer.host)
 
+    def _canonicalize_announced_peer_endpoint(self, peer: OutboundPeer) -> OutboundPeer | None:
+        """Normalize one announced peer so transient ports do not enter the persistent peerbook."""
+
+        if not self._is_announced_peer_dialable(peer):
+            return None
+        default_port = get_network_config(self.service.network).default_p2p_port
+        if peer.port == default_port:
+            return peer
+        if self._host_is_literal_ip(peer.host):
+            return OutboundPeer(peer.host, default_port)
+        return None
+
     def _resolved_peer_ips(self, peer: OutboundPeer) -> set[str]:
         """Resolve one peer endpoint into concrete IPs when possible."""
 
@@ -1585,7 +1608,11 @@ class NodeRuntime:
     def _is_advertisable_peer(self, peer) -> bool:
         """Return whether a persisted peer should be re-announced to other peers."""
 
-        return peer.direction != "inbound" and peer.port > 0 and not self._is_peer_currently_banned(peer.host, peer.port)
+        if peer.direction == "inbound" or peer.port <= 0 or self._is_peer_currently_banned(peer.host, peer.port):
+            return False
+        if peer.source == "discovered" and not self._is_reusable_discovered_peer(peer):
+            return False
+        return True
 
     def _decayed_misbehavior_state(self, info, *, now: int) -> tuple[int, int]:
         """Return the peer misbehavior score after applying passive decay."""
@@ -1869,7 +1896,10 @@ class NodeRuntime:
         peers = [
             peer
             for peer in self.service.list_peers()
-            if peer.source not in {"manual", "seed"} and not self._is_persisted_peer_host_dialable(peer.host)
+            if (
+                (peer.source == "discovered" and not self._is_reusable_discovered_peer(peer))
+                or (peer.source not in {"manual", "seed", "discovered"} and not self._is_persisted_peer_host_dialable(peer.host))
+            )
         ]
         for peer in peers:
             self._outbound_targets.pop((peer.host, peer.port), None)

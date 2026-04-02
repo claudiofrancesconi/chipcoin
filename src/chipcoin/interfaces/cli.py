@@ -104,6 +104,11 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(service.peer_summary())
             return 0
 
+        if args.command == "peerbook-clean":
+            assert service is not None
+            _print_json(service.peerbook_clean(reset_penalties=args.reset_penalties, dry_run=args.dry_run))
+            return 0
+
         if args.command == "mempool":
             assert service is not None
             _print_json(service.mempool_diagnostics())
@@ -571,6 +576,9 @@ def _build_parser() -> argparse.ArgumentParser:
     peer_detail_parser = subparsers.add_parser("peer-detail")
     peer_detail_parser.add_argument("--node-id", required=True)
     subparsers.add_parser("peer-summary")
+    peerbook_clean_parser = subparsers.add_parser("peerbook-clean")
+    peerbook_clean_parser.add_argument("--reset-penalties", action="store_true")
+    peerbook_clean_parser.add_argument("--dry-run", action="store_true")
     subparsers.add_parser("mempool")
     utxos_parser = subparsers.add_parser("utxos")
     utxos_parser.add_argument("--address", required=True)

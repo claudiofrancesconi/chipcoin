@@ -622,8 +622,8 @@ def test_runtime_ignores_announced_alias_of_known_peer(monkeypatch) -> None:
 def test_runtime_learns_discovered_peers_from_addr_gossip_and_persists_source() -> None:
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:
-            database_path = Path(tempdir) / "chipcoin.sqlite3"
-            service = _make_service(database_path)
+            database_path = Path(tempdir) / "chipcoin-devnet.sqlite3"
+            service = NodeService.open_sqlite(database_path, network="devnet")
             runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
 
             class _FakeSessionState:
@@ -647,12 +647,51 @@ def test_runtime_learns_discovered_peers_from_addr_gossip_and_persists_source() 
                 ),
             )
 
-            restarted = NodeRuntime(service=NodeService.open_sqlite(database_path), listen_host="127.0.0.1", listen_port=18445)
+            restarted = NodeRuntime(
+                service=NodeService.open_sqlite(database_path, network="devnet"),
+                listen_host="127.0.0.1",
+                listen_port=18445,
+            )
             peers = restarted.service.list_peers()
             learned = next(peer for peer in peers if peer.host == "188.218.213.92" and peer.port == 18444)
             assert learned.source == "discovered"
             assert learned.first_seen is not None
             assert OutboundPeer("188.218.213.92", 18444) in restarted._desired_outbound_peers()
+
+    asyncio.run(scenario())
+
+
+def test_runtime_canonicalizes_ephemeral_addr_gossip_to_default_p2p_port() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            database_path = Path(tempdir) / "chipcoin-devnet.sqlite3"
+            service = NodeService.open_sqlite(database_path, network="devnet")
+            runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+
+            class _FakeSessionState:
+                closed = False
+                handshake_complete = True
+                remote_version = None
+                errors: list[Exception] = []
+                error_causes: list[Exception] = []
+
+            class _FakeSession:
+                inbound = False
+                state = _FakeSessionState()
+
+            await runtime._on_peer_message(
+                _FakeSession(),
+                MessageEnvelope(
+                    command="addr",
+                    payload=AddrMessage(
+                        addresses=(PeerAddress(host="188.217.94.86", port=58236, services=0, timestamp=1_700_000_000),)
+                    ),
+                ),
+            )
+
+            peers = service.list_peers()
+            assert any(peer.host == "188.217.94.86" and peer.port == 18444 for peer in peers)
+            assert not any(peer.host == "188.217.94.86" and peer.port == 58236 for peer in peers)
 
     asyncio.run(scenario())
 
@@ -713,13 +752,50 @@ def test_runtime_purges_stale_discovered_peers_but_keeps_manual_peers() -> None:
         assert any(peer.host == "manual.example" for peer in peers)
 
 
+def test_runtime_start_purges_persisted_discovered_ephemeral_port_peers() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")
+        assert isinstance(service.peer_repository, SQLitePeerRepository)
+        service.peer_repository.add(
+            PeerInfo(
+                host="188.217.94.86",
+                port=58236,
+                network="devnet",
+                source="discovered",
+                first_seen=1_700_000_000,
+                last_seen=1_700_000_000,
+            )
+        )
+        service.peer_repository.add(
+            PeerInfo(
+                host="tiltmediaconsulting.com",
+                port=18444,
+                network="devnet",
+                source="manual",
+                first_seen=1_700_000_000,
+                last_seen=1_700_000_000,
+            )
+        )
+
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18444)
+        runtime._purge_undialable_persisted_peers()
+
+        peers = service.list_peers()
+        assert not any(peer.host == "188.217.94.86" and peer.port == 58236 for peer in peers)
+        assert any(peer.host == "tiltmediaconsulting.com" and peer.port == 18444 for peer in peers)
+
+
 def test_runtime_limits_addr_relay_per_message_and_interval() -> None:
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:
-            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            service = NodeService.open_sqlite(
+                Path(tempdir) / "chipcoin-devnet.sqlite3",
+                network="devnet",
+                time_provider=lambda: 1_700_000_100,
+            )
             for index in range(5):
                 service.record_peer_observation(
-                    host=f"198.51.100.{index + 10}",
+                    host=f"188.218.213.{index + 10}",
                     port=18444,
                     source="discovered",
                     success_count=1,
@@ -765,7 +841,11 @@ def test_runtime_limits_addr_relay_per_message_and_interval() -> None:
 def test_runtime_does_not_relay_banned_peers_in_addr_messages() -> None:
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:
-            service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", time_provider=lambda: 1_700_000_100)
+            service = NodeService.open_sqlite(
+                Path(tempdir) / "chipcoin-devnet.sqlite3",
+                network="devnet",
+                time_provider=lambda: 1_700_000_100,
+            )
             service.record_peer_observation(
                 host="198.51.100.10",
                 port=18444,

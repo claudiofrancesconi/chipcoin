@@ -6,6 +6,33 @@ The Chipcoin node maintains chain state, validates blocks and transactions, expo
 
 The current public release does not use a node wallet file at runtime.
 
+## Role Boundaries
+
+The node is responsible for:
+
+- validation
+- chain and mempool persistence
+- peer discovery and synchronization
+- HTTP API serving
+
+The node is not responsible for:
+
+- mining payout key management
+- browser wallet secret storage
+- explorer UI hosting requirements
+- bootstrap authority over consensus
+
+Local node state:
+
+- `/runtime/node.sqlite3` inside Docker
+- the host file mapped from `NODE_DATA_PATH`
+
+Network state:
+
+- remote peers
+- current best chain
+- public endpoint reachability
+
 ## Runtime Inputs
 
 Relevant `.env` keys:
@@ -70,6 +97,51 @@ docker compose down
 
 ```bash
 docker compose logs -f node
+```
+
+## Restart And Update
+
+Restart only the node:
+
+```bash
+docker compose restart node
+```
+
+Rebuild after code or image changes:
+
+```bash
+git pull origin main
+docker compose up --build -d node
+```
+
+Expected after restart:
+
+- chain tip persists
+- peerbook persists
+- bans and backoff state persist
+- the runtime rebuilds live sync scheduling from local chain state and current peers
+
+Normal short-lived post-restart states:
+
+- `sync.mode=idle`
+- `operator_summary.connectivity_state=no_active_peers`
+- a few outbound reconnect attempts before peers handshake again
+
+Peerbook hygiene:
+
+- discovered peers should converge to canonical reusable endpoints, normally `host:18444` on `devnet`
+- if old transient discovered aliases or stale penalty state accumulate, prefer the CLI over manual SQL
+
+Prune transient discovered aliases:
+
+```bash
+docker compose exec node chipcoin --data /runtime/node.sqlite3 peerbook-clean
+```
+
+Prune transient aliases and clear saved backoff / ban / misbehavior state:
+
+```bash
+docker compose exec node chipcoin --data /runtime/node.sqlite3 peerbook-clean --reset-penalties
 ```
 
 ## HTTP API
@@ -372,6 +444,11 @@ Typical recovery:
 - add a manual peer with `DIRECT_PEER` or `chipcoin add-peer`
 - let the node reconnect and relearn peers
 
+If you intentionally want an isolated node:
+
+- leave `DIRECT_PEER` and `BOOTSTRAP_URL` empty
+- expect `peer_count=0` until inbound peers arrive or you add peers manually
+
 ### Peer Banned Unexpectedly
 
 Checks:
@@ -437,6 +514,25 @@ Typical recovery:
 2. back up the SQLite database
 3. clear stale ban/backoff fields in the `peers` table
 4. restart and let the node reconnect
+
+Minimal SQLite recovery example on the host:
+
+```bash
+docker compose down
+cp /path/to/node.sqlite3 /path/to/node.sqlite3.bak
+sqlite3 /path/to/node.sqlite3 "
+UPDATE peers
+SET
+  ban_until = NULL,
+  misbehavior_score = 0,
+  backoff_until = 0,
+  reconnect_attempts = 0,
+  last_penalty_reason = NULL,
+  last_penalty_at = NULL
+WHERE network = 'devnet';
+"
+docker compose up --build -d node
+```
 
 ### Restart And Recovery Expectations
 

@@ -373,6 +373,80 @@ def test_cli_run_emits_warning_for_suspicious_block_timeout(caplog) -> None:
         assert "unusually low" in caplog.text
 
 
+def test_cli_peerbook_clean_prunes_ephemeral_discovered_peers_and_can_reset_penalties() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin-devnet.sqlite3"
+        service = NodeService.open_sqlite(db_path, network="devnet")
+        service.record_peer_observation(
+            host="188.217.94.86",
+            port=58236,
+            source="discovered",
+            handshake_complete=False,
+            score=-20,
+            reconnect_attempts=2,
+            backoff_until=1_700_000_123,
+            last_error="Handshake timed out.",
+            last_error_at=1_700_000_124,
+            protocol_error_class="handshake_failed",
+            misbehavior_score=10,
+            misbehavior_last_updated_at=1_700_000_124,
+            ban_until=1_700_000_200,
+            last_penalty_reason="timeout",
+            last_penalty_at=1_700_000_124,
+        )
+        service.record_peer_observation(
+            host="tiltmediaconsulting.com",
+            port=18444,
+            source="manual",
+            handshake_complete=True,
+            score=-15,
+            reconnect_attempts=1,
+            backoff_until=1_700_000_123,
+            misbehavior_score=5,
+            misbehavior_last_updated_at=1_700_000_124,
+            ban_until=1_700_000_200,
+            last_penalty_reason="timeout",
+            last_penalty_at=1_700_000_124,
+        )
+
+        code, payload = _run_cli(["--network", "devnet", "--data", str(db_path), "peerbook-clean", "--reset-penalties"])
+
+        assert code == 0
+        assert payload["removed_count"] == 1
+        assert payload["removed"] == [
+            {"host": "188.217.94.86", "port": 58236, "reason": "noncanonical_discovered_port"}
+        ]
+        assert payload["penalties_reset_count"] == 1
+        peers = NodeService.open_sqlite(db_path, network="devnet").list_peers()
+        assert not any(peer.host == "188.217.94.86" and peer.port == 58236 for peer in peers)
+        manual = next(peer for peer in peers if peer.host == "tiltmediaconsulting.com" and peer.port == 18444)
+        assert manual.score == 0
+        assert manual.reconnect_attempts == 0
+        assert manual.backoff_until == 0
+        assert manual.misbehavior_score == 0
+        assert manual.ban_until is None
+
+
+def test_cli_peerbook_clean_supports_dry_run() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin-devnet.sqlite3"
+        service = NodeService.open_sqlite(db_path, network="devnet")
+        service.record_peer_observation(
+            host="188.217.94.86",
+            port=58236,
+            source="discovered",
+            handshake_complete=False,
+        )
+
+        code, payload = _run_cli(["--network", "devnet", "--data", str(db_path), "peerbook-clean", "--dry-run"])
+
+        assert code == 0
+        assert payload["dry_run"] is True
+        assert payload["removed_count"] == 1
+        peers = NodeService.open_sqlite(db_path, network="devnet").list_peers()
+        assert any(peer.host == "188.217.94.86" and peer.port == 58236 for peer in peers)
+
+
 def test_cli_mempool_difficulty_and_chain_window() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"

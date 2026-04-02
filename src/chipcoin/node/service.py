@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_DOWN
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..config import get_network_config
@@ -612,6 +612,63 @@ class NodeService:
         if self.peer_repository is not None:
             self.peer_repository.observe(peer)
         return peer
+
+    def peerbook_clean(self, *, reset_penalties: bool = False, dry_run: bool = False) -> dict[str, object]:
+        """Prune transient discovered peers and optionally clear saved penalty state."""
+
+        peers = self.list_peers()
+        default_port = get_network_config(self.network).default_p2p_port
+        removed: list[dict[str, object]] = []
+        reset: list[dict[str, object]] = []
+
+        for peer in peers:
+            if peer.source not in {"manual", "seed"} and peer.port != default_port:
+                removed.append({"host": peer.host, "port": peer.port, "reason": "noncanonical_discovered_port"})
+                if not dry_run:
+                    self.remove_peer(peer.host, peer.port)
+
+        if reset_penalties:
+            for peer in self.list_peers():
+                if (
+                    (peer.score or 0) == 0
+                    and (peer.reconnect_attempts or 0) == 0
+                    and (peer.backoff_until or 0) == 0
+                    and (peer.misbehavior_score or 0) == 0
+                    and peer.ban_until is None
+                    and peer.last_penalty_reason is None
+                    and peer.last_penalty_at is None
+                ):
+                    continue
+                reset.append({"host": peer.host, "port": peer.port})
+                if dry_run:
+                    continue
+                cleaned = replace(
+                    peer,
+                    score=0,
+                    reconnect_attempts=0,
+                    backoff_until=0,
+                    last_error=None,
+                    last_error_at=None,
+                    protocol_error_class=None,
+                    misbehavior_score=0,
+                    misbehavior_last_updated_at=self.time_provider(),
+                    ban_until=None,
+                    last_penalty_reason=None,
+                    last_penalty_at=None,
+                )
+                self.remove_peer(peer.host, peer.port)
+                self.peerbook.add(cleaned)
+                if self.peer_repository is not None:
+                    self.peer_repository.add(cleaned)
+
+        return {
+            "peer_count_before": len(peers),
+            "removed_count": len(removed),
+            "removed": removed,
+            "penalties_reset_count": len(reset),
+            "penalties_reset": reset,
+            "dry_run": dry_run,
+        }
 
     def _peer_diagnostics_payload(self, peer: PeerInfo) -> dict[str, object]:
         """Render one peer record into deterministic diagnostic JSON fields."""

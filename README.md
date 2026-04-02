@@ -8,6 +8,10 @@ This public repository is centered on three components:
 - `miner`
 - `browser-wallet`
 
+An explorer can be deployed against the node HTTP API as an additional read-only operator surface.
+
+Bootstrap remains optional and secondary. It is only a peer discovery helper and is not part of consensus.
+
 The current public release target is `devnet`, not mainnet.
 
 Public devnet fallback defaults included in `.env.example`:
@@ -53,6 +57,9 @@ Relevant public areas:
 - `docs/node.md`: node setup and API notes
 - `docs/miner.md`: miner setup and wallet requirements
 - `docs/browser-wallet.md`: extension build and install flow
+- `apps/explorer`: read-only explorer frontend
+- `apps/explorer/README.md`: explorer deployment notes
+- `docs/bootstrap-service.md`: optional bootstrap role
 
 Operator-only or internal material may still exist in the tree, but it is not part of the primary public onboarding path.
 
@@ -91,6 +98,45 @@ Details:
 
 ## Quick Start
 
+## Runtime Roles
+
+Standard runtime roles in the current public stack:
+
+- `node`
+  - validates blocks and transactions
+  - stores chain, mempool, and peerbook state in SQLite
+  - exposes the HTTP API
+  - participates in P2P networking
+- `miner`
+  - builds candidate blocks
+  - uses a miner wallet file for payout address selection
+  - depends on network-visible chain state from peers
+- `browser-wallet`
+  - stores keys locally in extension storage
+  - signs transactions locally
+  - reads chain and address state from the node HTTP API
+- `explorer`
+  - read-only frontend over the node HTTP API
+  - does not sign, mine, validate, or participate in consensus
+- `bootstrap`
+  - optional peer discovery helper only
+  - not authoritative for consensus
+  - not required once nodes have a healthy persisted peerbook
+
+Local state vs network state:
+
+- local state
+  - node SQLite database
+  - miner SQLite database
+  - miner wallet JSON file
+  - browser wallet extension storage
+  - explorer local/browser-saved API base override
+- network state
+  - current best chain
+  - peer availability
+  - address balances and history served by a node
+  - public endpoint reachability
+
 ### Prerequisites
 
 - Python 3.11+
@@ -125,6 +171,38 @@ If you want a fully local first run, set:
 This starts an isolated local node/miner pair and avoids any external bootstrap dependency in the first-user path.
 
 If you want your node to improve peer discovery and network resilience, keep `NODE_P2P_BIND_PORT=18444` and make that TCP port publicly reachable from the internet when your router and firewall policy allow it.
+
+## First Deploy Path
+
+Shortest documented operator path:
+
+1. clone the repository
+2. copy `.env.example` to `.env`
+3. replace the placeholder runtime paths with real machine paths
+4. create a miner wallet file if you plan to run `miner`
+5. start `node`
+6. confirm the node HTTP API responds
+7. start `miner` only after the node path is understood
+8. add browser wallet or explorer after the node API is stable
+
+Practical order:
+
+```bash
+cp .env.example .env
+docker compose up --build -d node
+curl http://127.0.0.1:8081/v1/status
+docker compose up --build -d miner
+```
+
+If you also want the browser wallet:
+
+- build and load the extension
+- point it at your node HTTP API
+
+If you also want the explorer:
+
+- build the static explorer
+- point it at your node HTTP API through build-time or runtime override
 
 Peer misbehavior defaults in `.env.example`:
 
@@ -254,6 +332,38 @@ Detached mode:
 docker compose up -d --build node miner
 ```
 
+## Restart And Update
+
+Normal restart:
+
+```bash
+docker compose restart node
+docker compose restart miner
+```
+
+Clean rebuild after pulling changes:
+
+```bash
+git pull origin main
+docker compose up --build -d node miner
+```
+
+Expected after restart:
+
+- node reopens its SQLite state
+- peerbook is reused
+- sync state is rebuilt from local chain state and live peers
+- miner may briefly wait for initial peer sync before resuming work
+
+Use these checks after restart or update:
+
+```bash
+docker compose ps
+docker compose logs --tail=100 node
+docker compose logs --tail=100 miner
+curl http://127.0.0.1:8081/v1/status
+```
+
 ### Inspect Runtime
 
 ```bash
@@ -297,6 +407,50 @@ That runbook covers:
 - miner waiting for initial sync
 - stale peerbook or stale bans
 - restart and recovery expectations
+
+Useful peerbook hygiene command:
+
+```bash
+docker compose exec node chipcoin --data /runtime/node.sqlite3 peerbook-clean --reset-penalties
+```
+
+## Common Recovery Cases
+
+### Isolated Startup
+
+If startup warns that no startup peer was found:
+
+- this is valid if the node already has a populated peerbook
+- if the peerbook is empty, add a manual peer or bootstrap URL temporarily
+
+### Stale Peerbook Or Stale Bans
+
+Symptoms:
+
+- no active peers even though the network is healthy
+- peers remain banned long after the network recovered
+
+Typical recovery:
+
+1. stop the affected runtime
+2. back up the SQLite database
+3. clear stale peer ban/backoff rows in the `peers` table
+4. restart and let the node relearn live peers
+
+### Node Endpoint Moved
+
+If the node HTTP API URL changes:
+
+- update the browser wallet saved endpoint in `Settings`
+- update the explorer API base override or rebuild/runtime config
+- update any operator scripts or bookmarks using the old URL
+
+### Explorer Runtime API Base Moved
+
+If the explorer should point to a different node:
+
+- update the `?api=` override, local saved explorer override, runtime `config.js`, or build-time `VITE_NODE_API_BASE_URL`
+- rebuild or redeploy the explorer if you changed the static assets
 
 ## Local Development Setup
 
