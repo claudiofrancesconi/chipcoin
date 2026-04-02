@@ -2,6 +2,7 @@ from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import asyncio
+import logging
 
 from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
 from chipcoin.consensus.models import Block, OutPoint, Transaction, TxInput, TxOutput
@@ -291,6 +292,48 @@ def test_runtime_transport_failures_do_not_accumulate_misbehavior_bans() -> None
         assert info.misbehavior_score in (None, 0)
         assert info.ban_until is None
         assert runtime._is_peer_currently_banned("203.0.113.20", 18444) is False
+
+
+def test_runtime_sync_complete_log_reports_final_local_and_peer_target_heights(caplog) -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+
+        class _FakeRemote:
+            node_id = "peer-a"
+            start_height = 12
+
+        class _FakeState:
+            closed = False
+            handshake_complete = True
+            remote_version = _FakeRemote()
+
+        class _FakeSession:
+            inbound = False
+            state = _FakeState()
+            transport = type(
+                "_FakeTransport",
+                (),
+                {"peer_endpoint": staticmethod(lambda: type("_Peer", (), {"host": "198.51.100.20", "port": 18444})())},
+            )()
+
+        mined = _mine_block(service.build_candidate_block("CHCminer").block)
+        service.apply_block(mined)
+        session = _FakeSession()
+        runtime._sessions[session] = SessionHandle(
+            protocol=session,
+            outbound=True,
+            endpoint=OutboundPeer("198.51.100.20", 18444),
+            sync_target_height=0,
+        )
+
+        with caplog.at_level(logging.INFO, logger="chipcoin.node.runtime"):
+            runtime._log_sync_progress(session)
+
+        assert "sync complete" in caplog.text
+        assert "final_local_height=0" in caplog.text
+        assert "peer_target_height=0" in caplog.text
+        assert "best_header_height" in caplog.text
 
 
 def test_runtime_decays_misbehavior_score_over_time() -> None:

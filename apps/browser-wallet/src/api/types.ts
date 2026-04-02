@@ -1,5 +1,7 @@
 export interface HealthResponse {
   status: "ok";
+  api_version: string;
+  network: string;
 }
 
 export interface RewardWinner {
@@ -10,6 +12,7 @@ export interface RewardWinner {
 }
 
 export interface NodeStatus {
+  api_version: string;
   network: string;
   network_magic_hex: string;
   height: number | null;
@@ -23,6 +26,28 @@ export interface NodeStatus {
   mempool_size: number;
   peer_count: number;
   handshaken_peer_count: number;
+  banned_peer_count: number;
+  sync: {
+    mode: string;
+    validated_tip_height: number | null;
+    validated_tip_hash: string | null;
+    best_header_height: number | null;
+    best_header_hash: string | null;
+    missing_block_count: number;
+    queued_block_count: number;
+    inflight_block_count: number;
+    inflight_block_hashes: string[];
+    header_peer_count: number;
+    header_peers: string[];
+    block_peer_count: number;
+    block_peers: string[];
+    stalled_peers: Array<{ peer_id: string; stall_count: number }>;
+    download_window: {
+      start_height: number | null;
+      end_height: number | null;
+      size: number;
+    };
+  };
   next_block_reward_winners: RewardWinner[];
 }
 

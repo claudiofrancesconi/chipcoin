@@ -38,6 +38,8 @@ class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
 class HttpApiApp:
     """WSGI app exposing a small JSON API over the local node service."""
 
+    API_VERSION = "v1"
+
     def __init__(self, service: NodeService, *, allowed_origins: set[str] | None = None) -> None:
         self.service = service
         self.allowed_origins = set() if allowed_origins is None else {origin for origin in allowed_origins if origin}
@@ -84,10 +86,10 @@ class HttpApiApp:
 
     def _dispatch(self, *, method: str, path: str, environ) -> object:
         if method == "GET" and path == "/v1/health":
-            return {"status": "ok"}
+            return {"status": "ok", "api_version": self.API_VERSION, "network": self.service.network}
 
         if method == "GET" and path == "/v1/status":
-            return self.service.status()
+            return {"api_version": self.API_VERSION, **self.service.status()}
 
         if method == "GET" and path == "/v1/tip":
             return format_tip(self.service.chain_tip())

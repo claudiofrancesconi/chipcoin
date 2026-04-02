@@ -1775,10 +1775,11 @@ class NodeRuntime:
         if target_height <= local_height:
             if handle.sync_target_height is not None:
                 self.logger.info(
-                    "sync complete peer=%s local_height=%s target_height=%s",
+                    "sync complete peer=%s final_local_height=%s peer_target_height=%s best_header_height=%s",
                     self._format_peer_for_logs(session),
                     local_height,
                     target_height,
+                    None if self.sync_manager.best_header_record() is None else self.sync_manager.best_header_record().height,
                 )
             handle.sync_target_height = None
             handle.sync_total_missing_blocks = None

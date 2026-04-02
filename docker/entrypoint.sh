@@ -95,6 +95,18 @@ run_node() {
     peer_args=(--peer "$peer" --peer-source "${DISCOVERY_SOURCE:-manual}")
   else
     log "Node discovery target=isolated"
+    if [[ "${PEER_DISCOVERY_ENABLED:-true}" != "true" && "${PEER_DISCOVERY_ENABLED:-true}" != "1" ]]; then
+      warn "Peer discovery is disabled and no startup peer was found. Node will remain isolated until you add peers manually."
+    else
+      warn "No startup peer was found. Node will rely on the persisted peerbook or inbound peers."
+    fi
+  fi
+
+  if awk 'BEGIN { exit !('"${BLOCK_REQUEST_TIMEOUT_SECONDS:-15}"' < 5) }'; then
+    warn "BLOCK_REQUEST_TIMEOUT_SECONDS=${BLOCK_REQUEST_TIMEOUT_SECONDS:-15} is unusually low and may cause unnecessary block reassignment churn."
+  fi
+  if awk 'BEGIN { exit !('"${BLOCK_DOWNLOAD_WINDOW_SIZE:-128}"' < '"${BLOCK_MAX_INFLIGHT_PER_PEER:-16}"') }'; then
+    warn "BLOCK_DOWNLOAD_WINDOW_SIZE=${BLOCK_DOWNLOAD_WINDOW_SIZE:-128} is below BLOCK_MAX_INFLIGHT_PER_PEER=${BLOCK_MAX_INFLIGHT_PER_PEER:-16}; effective throughput will be reduced."
   fi
 
   start_http_api &
@@ -121,7 +133,7 @@ run_node() {
     --headers-max-per-message "${HEADERS_MAX_PER_MESSAGE:-2000}" \
     --block-download-window-size "${BLOCK_DOWNLOAD_WINDOW_SIZE:-128}" \
     --block-max-inflight-per-peer "${BLOCK_MAX_INFLIGHT_PER_PEER:-16}" \
-    --block-request-timeout-seconds "${BLOCK_REQUEST_TIMEOUT_SECONDS:-10}" \
+    --block-request-timeout-seconds "${BLOCK_REQUEST_TIMEOUT_SECONDS:-15}" \
     --headers-sync-parallel-peers "${HEADERS_SYNC_PARALLEL_PEERS:-2}" \
     --headers-sync-start-height-gap-threshold "${HEADERS_SYNC_START_HEIGHT_GAP_THRESHOLD:-1}" \
     --misbehavior-warning-threshold "${PEER_MISBEHAVIOR_WARNING_THRESHOLD:-25}" \
@@ -153,6 +165,14 @@ run_miner() {
     peer_args=(--peer "$peer" --peer-source "${DISCOVERY_SOURCE:-manual}")
   else
     log "Miner discovery target=isolated"
+    warn "No startup peer was found. Miner will rely on its peerbook and local node seeding fallback if available."
+  fi
+
+  if awk 'BEGIN { exit !('"${BLOCK_REQUEST_TIMEOUT_SECONDS:-15}"' < 5) }'; then
+    warn "BLOCK_REQUEST_TIMEOUT_SECONDS=${BLOCK_REQUEST_TIMEOUT_SECONDS:-15} is unusually low and may cause unnecessary block reassignment churn."
+  fi
+  if awk 'BEGIN { exit !('"${BLOCK_DOWNLOAD_WINDOW_SIZE:-128}"' < '"${BLOCK_MAX_INFLIGHT_PER_PEER:-16}"') }'; then
+    warn "BLOCK_DOWNLOAD_WINDOW_SIZE=${BLOCK_DOWNLOAD_WINDOW_SIZE:-128} is below BLOCK_MAX_INFLIGHT_PER_PEER=${BLOCK_MAX_INFLIGHT_PER_PEER:-16}; effective throughput will be reduced."
   fi
 
   exec chipcoin \
@@ -178,7 +198,7 @@ run_miner() {
     --headers-max-per-message "${HEADERS_MAX_PER_MESSAGE:-2000}" \
     --block-download-window-size "${BLOCK_DOWNLOAD_WINDOW_SIZE:-128}" \
     --block-max-inflight-per-peer "${BLOCK_MAX_INFLIGHT_PER_PEER:-16}" \
-    --block-request-timeout-seconds "${BLOCK_REQUEST_TIMEOUT_SECONDS:-10}" \
+    --block-request-timeout-seconds "${BLOCK_REQUEST_TIMEOUT_SECONDS:-15}" \
     --headers-sync-parallel-peers "${HEADERS_SYNC_PARALLEL_PEERS:-2}" \
     --headers-sync-start-height-gap-threshold "${HEADERS_SYNC_START_HEIGHT_GAP_THRESHOLD:-1}" \
     --misbehavior-warning-threshold "${PEER_MISBEHAVIOR_WARNING_THRESHOLD:-25}" \

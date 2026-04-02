@@ -86,6 +86,14 @@ def _peer_state(peer: PeerInfo, *, now: int) -> str:
     return peer.source or "discovered"
 
 
+def _remaining_seconds(target: int | None, *, now: int) -> int:
+    """Return non-negative remaining seconds until a timestamp expires."""
+
+    if target is None or target <= now:
+        return 0
+    return target - now
+
+
 class NodeService:
     """Local node orchestrator for validation, chain persistence, and sync."""
 
@@ -481,6 +489,27 @@ class NodeService:
                 peer["port"],
             )
         )
+        non_banned_peer_count = len(peers) - banned_peer_count
+        good_peer_count = by_state.get("good", 0)
+        questionable_peer_count = by_state.get("questionable", 0)
+        manual_peer_count = by_source.get("manual", 0)
+        seed_peer_count = by_source.get("seed", 0)
+        discovered_peer_count = by_source.get("discovered", 0)
+        peer_warnings: list[str] = []
+        if not peers:
+            peer_health = "empty"
+            peer_warnings.append("no_known_peers")
+        elif non_banned_peer_count == 0:
+            peer_health = "all_banned"
+            peer_warnings.append("all_known_peers_banned")
+        elif backoff_peers:
+            peer_health = "degraded"
+            peer_warnings.append("backoff_peers_present")
+        elif questionable_peer_count > 0 and good_peer_count == 0:
+            peer_health = "degraded"
+            peer_warnings.append("only_questionable_peers_visible")
+        else:
+            peer_health = "ok"
         return {
             "error_class_counts": dict(sorted(by_error_class.items())),
             "penalty_reason_counts": dict(sorted(by_penalty_reason.items())),
@@ -489,6 +518,12 @@ class NodeService:
             "peer_count_by_source": dict(sorted(by_source.items())),
             "peer_count_by_state": dict(sorted(by_state.items())),
             "peer_count_by_handshake_status": by_handshake_status,
+            "good_peer_count": good_peer_count,
+            "questionable_peer_count": questionable_peer_count,
+            "manual_peer_count": manual_peer_count,
+            "seed_peer_count": seed_peer_count,
+            "discovered_peer_count": discovered_peer_count,
+            "non_banned_peer_count": non_banned_peer_count,
             "backoff_peer_count": len(backoff_peers),
             "banned_peer_count": banned_peer_count,
             "backoff_peers": backoff_peers,
@@ -497,6 +532,13 @@ class NodeService:
             "most_disconnected_peer": most_disconnected_peer,
             "most_recent_error_peer": None if not recent_errors else recent_errors[0],
             "peer_count": len(peers),
+            "operator_summary": {
+                "peer_health": peer_health,
+                "non_banned_peer_count": non_banned_peer_count,
+                "active_backoff_peer_count": len(backoff_peers),
+                "active_ban_count": banned_peer_count,
+                "warnings": tuple(peer_warnings),
+            },
         }
 
     def record_peer_observation(
@@ -594,6 +636,7 @@ class NodeService:
             "score": peer.score,
             "reconnect_attempts": peer.reconnect_attempts,
             "backoff_until": peer.backoff_until,
+            "backoff_remaining_seconds": _remaining_seconds(peer.backoff_until, now=now),
             "last_seen": peer.last_seen,
             "session_started_at": peer.session_started_at,
             "last_known_height": peer.last_known_height,
@@ -604,6 +647,7 @@ class NodeService:
             "misbehavior_score": peer.misbehavior_score,
             "misbehavior_last_updated_at": peer.misbehavior_last_updated_at,
             "ban_until": peer.ban_until,
+            "ban_remaining_seconds": _remaining_seconds(peer.ban_until, now=now),
             "banned": peer.ban_until is not None and peer.ban_until > self.time_provider(),
             "last_penalty_reason": peer.last_penalty_reason,
             "last_penalty_at": peer.last_penalty_at,
@@ -624,6 +668,9 @@ class NodeService:
             params=self.params,
         )
         peers = self.list_peers()
+        handshaken_peer_count = sum(1 for peer in peers if peer.handshake_complete)
+        banned_peer_count = sum(1 for peer in peers if peer.ban_until is not None and peer.ban_until > self.time_provider())
+        sync_status = self.sync_status()
         return {
             "network": self.network,
             "network_magic_hex": get_network_config(self.network).magic.hex(),
@@ -637,11 +684,15 @@ class NodeService:
             "cumulative_work": None if record is None else record.cumulative_work,
             "mempool_size": len(self.mempool.list_transactions()),
             "peer_count": len(peers),
-            "handshaken_peer_count": sum(1 for peer in peers if peer.handshake_complete),
-            "banned_peer_count": sum(
-                1 for peer in peers if peer.ban_until is not None and peer.ban_until > self.time_provider()
+            "handshaken_peer_count": handshaken_peer_count,
+            "banned_peer_count": banned_peer_count,
+            "sync": sync_status,
+            "operator_summary": self._operator_status_summary(
+                peer_count=len(peers),
+                handshaken_peer_count=handshaken_peer_count,
+                banned_peer_count=banned_peer_count,
+                sync_status=sync_status,
             ),
-            "sync": self.sync_status(),
             "next_block_reward_winners": [
                 {
                     "node_id": rewarded_node.node_id,
@@ -651,6 +702,47 @@ class NodeService:
                 }
                 for rewarded_node in rewarded_nodes
             ],
+        }
+
+    def _operator_status_summary(
+        self,
+        *,
+        peer_count: int,
+        handshaken_peer_count: int,
+        banned_peer_count: int,
+        sync_status: dict[str, object],
+    ) -> dict[str, object]:
+        """Return a concise operator-oriented summary for status surfaces."""
+
+        sync_mode = str(sync_status.get("mode", "idle"))
+        if peer_count == 0:
+            connectivity_state = "no_known_peers"
+        elif handshaken_peer_count == 0:
+            connectivity_state = "no_active_peers"
+        else:
+            connectivity_state = "connected"
+        warnings: list[str] = []
+        validated_tip_height = sync_status.get("validated_tip_height")
+        best_header_height = sync_status.get("best_header_height")
+        missing_block_count = sync_status.get("missing_block_count")
+        stalled_peers = sync_status.get("stalled_peers")
+        if connectivity_state == "no_known_peers":
+            warnings.append("no_known_peers")
+        elif connectivity_state == "no_active_peers":
+            warnings.append("no_active_peers")
+        if banned_peer_count > 0:
+            warnings.append("banned_peers_present")
+        if isinstance(best_header_height, int) and isinstance(validated_tip_height, int) and best_header_height > validated_tip_height:
+            warnings.append("header_tip_ahead_of_validated_tip")
+        if isinstance(missing_block_count, int) and missing_block_count > 0:
+            warnings.append("missing_blocks_for_best_header")
+        if isinstance(stalled_peers, tuple) and stalled_peers:
+            warnings.append("stalled_peers_present")
+        return {
+            "sync_state": sync_mode,
+            "connectivity_state": connectivity_state,
+            "peer_attention": bool(warnings),
+            "warnings": tuple(warnings),
         }
 
     def set_runtime_sync_status(self, payload: dict[str, object] | None) -> None:

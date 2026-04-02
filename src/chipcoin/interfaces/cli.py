@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import secrets
 import sys
 from pathlib import Path
@@ -497,7 +498,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--headers-max-per-message", type=int, default=2000)
     run_parser.add_argument("--block-download-window-size", type=int, default=128)
     run_parser.add_argument("--block-max-inflight-per-peer", type=int, default=16)
-    run_parser.add_argument("--block-request-timeout-seconds", type=float, default=10.0)
+    run_parser.add_argument("--block-request-timeout-seconds", type=float, default=15.0)
     run_parser.add_argument("--headers-sync-parallel-peers", type=int, default=2)
     run_parser.add_argument("--headers-sync-start-height-gap-threshold", type=int, default=1)
     run_parser.add_argument("--misbehavior-warning-threshold", type=int, default=25)
@@ -533,7 +534,7 @@ def _build_parser() -> argparse.ArgumentParser:
     mine_parser.add_argument("--headers-max-per-message", type=int, default=2000)
     mine_parser.add_argument("--block-download-window-size", type=int, default=128)
     mine_parser.add_argument("--block-max-inflight-per-peer", type=int, default=16)
-    mine_parser.add_argument("--block-request-timeout-seconds", type=float, default=10.0)
+    mine_parser.add_argument("--block-request-timeout-seconds", type=float, default=15.0)
     mine_parser.add_argument("--headers-sync-parallel-peers", type=int, default=2)
     mine_parser.add_argument("--headers-sync-start-height-gap-threshold", type=int, default=1)
     mine_parser.add_argument("--misbehavior-warning-threshold", type=int, default=25)
@@ -683,6 +684,7 @@ async def _run_runtime(service: NodeService, args, miner_address: str | None = N
     """Run the persistent node runtime."""
 
     peers = [_parse_peer(peer) for peer in args.peer]
+    _emit_runtime_warnings(service, args, peers, miner_address=miner_address)
     network_config = get_network_config(service.network)
     runtime = NodeRuntime(
         service=service,
@@ -702,7 +704,7 @@ async def _run_runtime(service: NodeService, args, miner_address: str | None = N
         max_headers_per_message=getattr(args, "headers_max_per_message", 2000),
         block_download_window_size=getattr(args, "block_download_window_size", 128),
         block_max_inflight_per_peer=getattr(args, "block_max_inflight_per_peer", 16),
-        block_request_timeout_seconds=getattr(args, "block_request_timeout_seconds", 10.0),
+        block_request_timeout_seconds=getattr(args, "block_request_timeout_seconds", 15.0),
         headers_sync_parallel_peers=getattr(args, "headers_sync_parallel_peers", 2),
         headers_sync_start_height_gap_threshold=getattr(args, "headers_sync_start_height_gap_threshold", 1),
         miner_address=miner_address if miner_address is not None else getattr(args, "miner_address", None),
@@ -728,6 +730,39 @@ async def _run_runtime(service: NodeService, args, miner_address: str | None = N
         await runtime.run_forever()
     except KeyboardInterrupt:
         await runtime.stop()
+
+
+def _emit_runtime_warnings(service: NodeService, args, peers: list[OutboundPeer], *, miner_address: str | None) -> None:
+    """Emit conservative startup warnings for isolated or suspicious runtime configs."""
+
+    logger = logging.getLogger("chipcoin.runtime.config")
+    peer_discovery_enabled = bool(getattr(args, "peer_discovery_enabled", True))
+    persisted_peers = service.list_peers()
+    peer_seed_url = getattr(args, "peer_seed_url", None)
+    has_local_seed_fallback = miner_address is not None and bool(peer_seed_url)
+
+    if not peer_discovery_enabled and not peers and not persisted_peers and not has_local_seed_fallback:
+        logger.warning("startup warning: peer discovery is disabled and no peers are configured; runtime will stay isolated")
+    elif not peers and not persisted_peers and not has_local_seed_fallback:
+        logger.warning(
+            "startup warning: no configured peers and empty peerbook; runtime will wait for inbound peers or later discovery"
+        )
+
+    block_request_timeout_seconds = float(getattr(args, "block_request_timeout_seconds", 15.0))
+    block_download_window_size = int(getattr(args, "block_download_window_size", 128))
+    block_max_inflight_per_peer = int(getattr(args, "block_max_inflight_per_peer", 16))
+
+    if block_request_timeout_seconds < 5:
+        logger.warning(
+            "startup warning: block request timeout %.2fs is unusually low and may cause unnecessary reassignment churn",
+            block_request_timeout_seconds,
+        )
+    if block_download_window_size < block_max_inflight_per_peer:
+        logger.warning(
+            "startup warning: block download window size %s is below per-peer inflight cap %s; effective throughput will be reduced",
+            block_download_window_size,
+            block_max_inflight_per_peer,
+        )
 
 
 def _parse_peer(raw: str) -> OutboundPeer:

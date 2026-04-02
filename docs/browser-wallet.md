@@ -107,6 +107,21 @@ Behavior:
 
 If the node is remote, allow the wallet origin through `CHIPCOIN_HTTP_ALLOWED_ORIGINS`.
 
+Stable API endpoints currently relied on by the wallet:
+
+- `GET /v1/health`
+- `GET /v1/status`
+- `GET /v1/tip`
+- `GET /v1/address/<address>`
+- `GET /v1/address/<address>/utxos`
+- `GET /v1/address/<address>/history`
+- `GET /v1/tx/<txid>`
+- `POST /v1/tx/submit`
+
+The wallet expects JSON errors in the form:
+
+- `{"error": {"code": "<stable_code>", "message": "<human_message>"}}`
+
 ## Storage Model
 
 The wallet stores secrets only in browser extension local storage.

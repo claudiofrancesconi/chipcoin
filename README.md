@@ -157,7 +157,7 @@ Headers-first sync defaults in `.env.example`:
 - `HEADERS_MAX_PER_MESSAGE=2000`
 - `BLOCK_DOWNLOAD_WINDOW_SIZE=128`
 - `BLOCK_MAX_INFLIGHT_PER_PEER=16`
-- `BLOCK_REQUEST_TIMEOUT_SECONDS=10`
+- `BLOCK_REQUEST_TIMEOUT_SECONDS=15`
 - `HEADERS_SYNC_PARALLEL_PEERS=2`
 - `HEADERS_SYNC_START_HEIGHT_GAP_THRESHOLD=1`
 
@@ -260,7 +260,9 @@ docker compose up -d --build node miner
 docker compose ps
 docker compose logs -f node
 docker compose logs -f miner
+chipcoin --data /path/to/node.sqlite3 status
 chipcoin --data /path/to/node.sqlite3 peer-summary
+chipcoin --data /path/to/node.sqlite3 list-peers
 ```
 
 Node HTTP API default:
@@ -282,6 +284,19 @@ Useful examples:
 chipcoin --network devnet --data /path/to/Chipcoin-runtime/data/node-devnet.sqlite3 tip
 chipcoin --network devnet --data /path/to/Chipcoin-runtime/data/miner-devnet.sqlite3 tip
 ```
+
+For practical operator diagnostics and recovery steps, use:
+
+- `docs/node.md`
+
+That runbook covers:
+
+- node not syncing
+- peerbook empty
+- peer banned unexpectedly
+- miner waiting for initial sync
+- stale peerbook or stale bans
+- restart and recovery expectations
 
 ## Local Development Setup
 

@@ -1,4 +1,5 @@
 import json
+import logging
 from contextlib import redirect_stdout
 from dataclasses import replace
 from io import StringIO
@@ -104,6 +105,12 @@ def test_cli_status_and_tip() -> None:
         assert status_payload["cumulative_work"] is not None
         assert status_payload["expected_next_bits"] == mined.header.bits
         assert status_payload["sync"]["mode"] == "idle"
+        assert status_payload["operator_summary"] == {
+            "sync_state": "idle",
+            "connectivity_state": "no_known_peers",
+            "peer_attention": True,
+            "warnings": ["no_known_peers"],
+        }
         assert tip_code == 0
         assert tip_payload["block_hash"] == mined.block_hash()
         assert tip_payload["bits"] == mined.header.bits
@@ -203,41 +210,42 @@ def test_cli_list_peers_and_peer_detail_show_protocol_error_class() -> None:
 
         assert list_code == 0
         assert detail_code == 0
-        assert list_payload == [
-            {
-                "host": "127.0.0.1",
-                "port": 18444,
-                "network": "mainnet",
-                "network_magic_hex": "f9beb4d9",
-                "direction": "outbound",
-                "source": None,
-                "peer_state": "banned",
-                "first_seen": 1_700_000_000,
-                "node_id": "peer-a",
-                "handshake_complete": False,
-                "last_success": None,
-                "last_failure": None,
-                "failure_count": None,
-                "success_count": None,
-                "score": -25,
-                "reconnect_attempts": 2,
-                "backoff_until": 1_700_000_123,
-                "last_seen": 1_700_000_000,
-                "session_started_at": 1_700_000_120,
-                "last_known_height": 42,
-                "disconnect_count": 3,
-                "last_error": "Unexpected network magic.",
-                "last_error_at": 1_700_000_124,
-                "last_penalty_at": 1_700_000_124,
-                "last_penalty_reason": "wrong_network_magic",
-                "protocol_error_class": "wrong_network_magic",
-                "misbehavior_last_updated_at": 1_700_000_124,
-                "misbehavior_score": 60,
-                "ban_until": 2_700_000_224,
-                "banned": True,
-            }
-        ]
-        assert detail_payload == list_payload[0]
+        assert len(list_payload) == 1
+        assert list_payload[0] == detail_payload
+        assert list_payload[0]["host"] == "127.0.0.1"
+        assert list_payload[0]["port"] == 18444
+        assert list_payload[0]["network"] == "mainnet"
+        assert list_payload[0]["network_magic_hex"] == "f9beb4d9"
+        assert list_payload[0]["direction"] == "outbound"
+        assert list_payload[0]["source"] is None
+        assert list_payload[0]["peer_state"] == "banned"
+        assert list_payload[0]["first_seen"] == 1_700_000_000
+        assert list_payload[0]["node_id"] == "peer-a"
+        assert list_payload[0]["handshake_complete"] is False
+        assert list_payload[0]["last_success"] is None
+        assert list_payload[0]["last_failure"] is None
+        assert list_payload[0]["failure_count"] is None
+        assert list_payload[0]["success_count"] is None
+        assert list_payload[0]["score"] == -25
+        assert list_payload[0]["reconnect_attempts"] == 2
+        assert list_payload[0]["backoff_until"] == 1_700_000_123
+        assert isinstance(list_payload[0]["backoff_remaining_seconds"], int)
+        assert list_payload[0]["backoff_remaining_seconds"] >= 0
+        assert list_payload[0]["last_seen"] == 1_700_000_000
+        assert list_payload[0]["session_started_at"] == 1_700_000_120
+        assert list_payload[0]["last_known_height"] == 42
+        assert list_payload[0]["disconnect_count"] == 3
+        assert list_payload[0]["last_error"] == "Unexpected network magic."
+        assert list_payload[0]["last_error_at"] == 1_700_000_124
+        assert list_payload[0]["last_penalty_at"] == 1_700_000_124
+        assert list_payload[0]["last_penalty_reason"] == "wrong_network_magic"
+        assert list_payload[0]["protocol_error_class"] == "wrong_network_magic"
+        assert list_payload[0]["misbehavior_last_updated_at"] == 1_700_000_124
+        assert list_payload[0]["misbehavior_score"] == 60
+        assert list_payload[0]["ban_until"] == 2_700_000_224
+        assert isinstance(list_payload[0]["ban_remaining_seconds"], int)
+        assert list_payload[0]["ban_remaining_seconds"] > 0
+        assert list_payload[0]["banned"] is True
 
 
 def test_cli_peer_summary_aggregates_error_classes_and_worst_peers() -> None:
@@ -298,16 +306,71 @@ def test_cli_peer_summary_aggregates_error_classes_and_worst_peers() -> None:
         assert payload["peer_count_by_source"] == {}
         assert payload["peer_count_by_state"] == {"banned": 1, "questionable": 1}
         assert payload["peer_count_by_handshake_status"] == {"complete": 1, "incomplete": 1, "unknown": 0}
+        assert payload["good_peer_count"] == 0
+        assert payload["questionable_peer_count"] == 1
+        assert payload["manual_peer_count"] == 0
+        assert payload["seed_peer_count"] == 0
+        assert payload["discovered_peer_count"] == 0
+        assert payload["non_banned_peer_count"] == 1
         assert payload["backoff_peer_count"] == 1
         assert payload["banned_peer_count"] == 1
         assert payload["penalty_reason_counts"] == {
             "duplicate_connection": 1,
             "wrong_network_magic": 1,
         }
+        assert payload["operator_summary"] == {
+            "peer_health": "degraded",
+            "non_banned_peer_count": 1,
+            "active_backoff_peer_count": 1,
+            "active_ban_count": 1,
+            "warnings": ["backoff_peers_present"],
+        }
         assert payload["highest_misbehavior_peer"]["node_id"] == "peer-a"
         assert payload["worst_score_peer"]["node_id"] == "peer-a"
         assert payload["most_disconnected_peer"]["node_id"] == "peer-b"
         assert payload["most_recent_error_peer"]["node_id"] == "peer-b"
+
+
+def test_cli_run_emits_warning_for_empty_peerbook_and_no_peers(caplog) -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        args = cli_module._build_parser().parse_args(
+            [
+                "--data",
+                str(db_path),
+                "run",
+                "--run-seconds",
+                "0",
+            ]
+        )
+
+        with caplog.at_level(logging.WARNING, logger="chipcoin.runtime.config"):
+            cli_module._emit_runtime_warnings(service, args, [], miner_address=None)
+
+        assert "empty peerbook" in caplog.text
+
+
+def test_cli_run_emits_warning_for_suspicious_block_timeout(caplog) -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        args = cli_module._build_parser().parse_args(
+            [
+                "--data",
+                str(db_path),
+                "run",
+                "--run-seconds",
+                "0",
+                "--block-request-timeout-seconds",
+                "3",
+            ]
+        )
+
+        with caplog.at_level(logging.WARNING, logger="chipcoin.runtime.config"):
+            cli_module._emit_runtime_warnings(service, args, [], miner_address=None)
+
+        assert "unusually low" in caplog.text
 
 
 def test_cli_mempool_difficulty_and_chain_window() -> None:

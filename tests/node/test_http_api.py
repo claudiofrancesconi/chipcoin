@@ -1,13 +1,16 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from contextlib import redirect_stdout
 from io import BytesIO
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from chipcoin.consensus.models import Block, OutPoint
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import serialize_transaction
+from chipcoin.interfaces.cli import main as cli_main
 from chipcoin.interfaces.http_api import HttpApiApp
 from chipcoin.node.service import NodeService
 from ..helpers import put_wallet_utxo, signed_payment, wallet_key
@@ -48,6 +51,13 @@ def _call_wsgi(app, *, method: str, path: str, query: str = "", body: object | N
     return captured["status"], captured["headers"], payload
 
 
+def _run_cli(argv: list[str]) -> tuple[int, object]:
+    stdout = StringIO()
+    with redirect_stdout(stdout):
+        code = cli_main(argv)
+    return code, json.loads(stdout.getvalue().strip())
+
+
 def test_http_api_health_status_and_tip() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
@@ -58,10 +68,17 @@ def test_http_api_health_status_and_tip() -> None:
         tip_status, _, tip_body = _call_wsgi(app, method="GET", path="/v1/tip")
 
         assert health_status == "200 OK"
-        assert health_body == {"status": "ok"}
+        assert health_body == {"status": "ok", "api_version": "v1", "network": "mainnet"}
         assert status_status == "200 OK"
+        assert status_body["api_version"] == "v1"
         assert status_body["network"] == "mainnet"
         assert status_body["sync"]["mode"] == "idle"
+        assert status_body["operator_summary"] == {
+            "sync_state": "idle",
+            "connectivity_state": "no_known_peers",
+            "peer_attention": True,
+            "warnings": ["no_known_peers"],
+        }
         assert tip_status == "200 OK"
         assert tip_body == {"height": None, "block_hash": None}
 
@@ -253,12 +270,180 @@ def test_http_api_peers_and_peers_summary() -> None:
         assert "handshake_complete" in peers_body[0]
         assert "misbehavior_score" in peers_body[0]
         assert "banned" in peers_body[0]
+        assert peers_body[0]["backoff_remaining_seconds"] == 0
+        assert peers_body[0]["ban_remaining_seconds"] == 0
         assert summary_status == "200 OK"
         assert summary_body["peer_count"] == 1
         assert summary_body["banned_peer_count"] == 0
         assert summary_body["peer_count_by_source"] == {"manual": 1}
         assert summary_body["peer_count_by_state"] == {"manual": 1}
-        assert summary_body["peer_count_by_network"]["mainnet"] == 1
+        assert summary_body["good_peer_count"] == 0
+        assert summary_body["non_banned_peer_count"] == 1
+        assert summary_body["operator_summary"] == {
+            "peer_health": "ok",
+            "non_banned_peer_count": 1,
+            "active_backoff_peer_count": 0,
+            "active_ban_count": 0,
+            "warnings": [],
+        }
+
+
+def test_http_api_and_cli_surfaces_are_consistent_for_status_and_peer_summary() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.add_peer("127.0.0.1", 18444, source="manual")
+        app = HttpApiApp(service)
+
+        cli_status_code, cli_status = _run_cli(["--data", str(db_path), "status"])
+        cli_summary_code, cli_summary = _run_cli(["--data", str(db_path), "peer-summary"])
+        http_status_code, _, http_status = _call_wsgi(app, method="GET", path="/v1/status")
+        http_summary_code, _, http_summary = _call_wsgi(app, method="GET", path="/v1/peers/summary")
+
+        assert cli_status_code == 0
+        assert cli_summary_code == 0
+        assert http_status_code == "200 OK"
+        assert http_summary_code == "200 OK"
+        assert cli_status["network"] == http_status["network"]
+        assert cli_status["sync"] == http_status["sync"]
+        assert cli_status["operator_summary"] == http_status["operator_summary"]
+        assert cli_summary == http_summary
+        assert http_summary["peer_count_by_network"]["mainnet"] == 1
+
+
+def test_http_api_stable_client_subset_shapes() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        owner = wallet_key(0)
+        funding_outpoint = OutPoint(txid="77" * 32, index=0)
+        put_wallet_utxo(service, funding_outpoint, value=100, owner=owner)
+        transaction = signed_payment(funding_outpoint, value=100, sender=owner, fee=10)
+        service.receive_transaction(transaction)
+        mined = _mine_block(service.build_candidate_block("CHCminer").block)
+        service.apply_block(mined)
+        service.add_peer("127.0.0.1", 18444, source="manual")
+        app = HttpApiApp(service)
+
+        _, _, health = _call_wsgi(app, method="GET", path="/v1/health")
+        _, _, status = _call_wsgi(app, method="GET", path="/v1/status")
+        _, _, blocks = _call_wsgi(app, method="GET", path="/v1/blocks")
+        _, _, block = _call_wsgi(app, method="GET", path="/v1/block", query="height=0")
+        _, _, tx = _call_wsgi(app, method="GET", path=f"/v1/tx/{transaction.txid()}")
+        _, _, address = _call_wsgi(app, method="GET", path=f"/v1/address/{owner.address}")
+        _, _, utxos = _call_wsgi(app, method="GET", path=f"/v1/address/{owner.address}/utxos")
+        _, _, history = _call_wsgi(app, method="GET", path=f"/v1/address/{owner.address}/history")
+        _, _, mempool = _call_wsgi(app, method="GET", path="/v1/mempool")
+        _, _, peers = _call_wsgi(app, method="GET", path="/v1/peers")
+        _, _, peer_summary = _call_wsgi(app, method="GET", path="/v1/peers/summary")
+
+        assert set(health) == {"api_version", "network", "status"}
+        assert health["status"] == "ok"
+
+        assert {
+            "api_version",
+            "network",
+            "network_magic_hex",
+            "height",
+            "tip_hash",
+            "current_bits",
+            "current_target",
+            "current_difficulty_ratio",
+            "expected_next_bits",
+            "expected_next_target",
+            "cumulative_work",
+            "mempool_size",
+            "peer_count",
+            "handshaken_peer_count",
+            "banned_peer_count",
+            "sync",
+            "operator_summary",
+            "next_block_reward_winners",
+        }.issubset(status.keys())
+        assert {
+            "mode",
+            "validated_tip_height",
+            "validated_tip_hash",
+            "best_header_height",
+            "best_header_hash",
+            "missing_block_count",
+            "queued_block_count",
+            "inflight_block_count",
+            "inflight_block_hashes",
+            "header_peer_count",
+            "header_peers",
+            "block_peer_count",
+            "block_peers",
+            "stalled_peers",
+            "download_window",
+        }.issubset(status["sync"].keys())
+
+        assert blocks and {"height", "block_hash", "timestamp", "bits", "difficulty_target", "difficulty_ratio", "cumulative_work", "weight_units", "transaction_count"}.issubset(blocks[0].keys())
+        assert {"block_hash", "height", "header", "cumulative_work", "weight_units", "fees_chipbits", "miner_payout_chipbits", "node_reward_payouts", "transaction_count", "transactions"}.issubset(block.keys())
+        assert {"location", "block_hash", "height", "transaction"}.issubset(tx.keys())
+        assert {"address", "confirmed_balance_chipbits", "immature_balance_chipbits", "spendable_balance_chipbits", "utxo_count"}.issubset(address.keys())
+        assert isinstance(utxos, list)
+        assert isinstance(history, list)
+        assert isinstance(mempool, list)
+        assert peers and {
+            "host",
+            "port",
+            "network",
+            "network_magic_hex",
+            "source",
+            "peer_state",
+            "handshake_complete",
+            "score",
+            "misbehavior_score",
+            "ban_until",
+            "ban_remaining_seconds",
+            "backoff_remaining_seconds",
+            "banned",
+        }.issubset(peers[0].keys())
+        assert {
+            "error_class_counts",
+            "penalty_reason_counts",
+            "peer_count_by_network",
+            "peer_count_by_direction",
+            "peer_count_by_source",
+            "peer_count_by_state",
+            "peer_count_by_handshake_status",
+            "good_peer_count",
+            "questionable_peer_count",
+            "manual_peer_count",
+            "seed_peer_count",
+            "discovered_peer_count",
+            "non_banned_peer_count",
+            "backoff_peer_count",
+            "banned_peer_count",
+            "backoff_peers",
+            "worst_score_peer",
+            "highest_misbehavior_peer",
+            "most_disconnected_peer",
+            "most_recent_error_peer",
+            "peer_count",
+            "operator_summary",
+        }.issubset(peer_summary.keys())
+
+
+def test_http_api_error_payload_is_stable_across_common_failures() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        app = HttpApiApp(service)
+
+        responses = [
+            _call_wsgi(app, method="GET", path="/v1/block"),
+            _call_wsgi(app, method="GET", path="/v1/block", query="height=99"),
+            _call_wsgi(app, method="GET", path="/v1/address/not-a-valid-address"),
+            _call_wsgi(app, method="POST", path="/v1/tx/submit", body={}),
+            _call_wsgi(app, method="GET", path="/v1/not-found"),
+        ]
+
+        for status, _headers, body in responses:
+            assert status in {"400 Bad Request", "404 Not Found"}
+            assert set(body.keys()) == {"error"}
+            assert set(body["error"].keys()) == {"code", "message"}
+            assert isinstance(body["error"]["code"], str)
+            assert isinstance(body["error"]["message"], str)
 
 
 def test_http_api_blocks_validation() -> None:
