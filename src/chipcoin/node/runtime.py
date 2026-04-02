@@ -553,8 +553,8 @@ class NodeRuntime:
             await self._announce_current_mempool(session)
             self._update_sync_status()
         except Exception as exc:
-            self.logger.info("handshake follow-up failed error=%s", exc)
-            await session.close(reason=str(exc))
+            self.logger.info("post-handshake bootstrap failed peer=%s error=%s", self._format_peer_for_logs(session), exc)
+            await session.close(reason="Post-handshake bootstrap failed.", error=exc)
             await self._drop_session(session)
 
     async def _on_peer_message(self, session: PeerProtocol, message: MessageEnvelope) -> None:
@@ -2115,8 +2115,6 @@ class NodeRuntime:
             return False
         classification = classify_peer_error(error)
         if classification in {"wrong_network_magic", "checksum_error", "malformed_message", "invalid_block", "invalid_tx"}:
-            return True
-        if handshake_complete and classification in {"handshake_failed", "timeout"}:
             return True
         return False
 

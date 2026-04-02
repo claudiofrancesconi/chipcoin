@@ -22,6 +22,7 @@ from chipcoin.node.mining import transaction_weight_units
 from chipcoin.node.peers import PeerInfo, PeerManager
 from chipcoin.node.messages import AddrMessage, HeadersMessage, MessageEnvelope, PeerAddress
 from chipcoin.node.p2p.errors import BlockRequestStalledError, DuplicateConnectionError, InvalidBlockError, ProtocolError
+from chipcoin.node.p2p.errors import HandshakeFailedError, TransportTimeoutError
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer, SessionHandle
 from chipcoin.node.p2p.transport import PeerEndpoint
 from chipcoin.node.service import NodeService
@@ -1527,6 +1528,47 @@ def test_runtime_logs_applied_block_height(caplog) -> None:
             runtime._log_block_application(session, result, reorged=False)
 
         assert "block applied peer=127.0.0.1:18444/peer-a height=0" in caplog.text
+
+
+def test_runtime_does_not_classify_post_handshake_timeouts_as_misbehavior() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.add_peer("127.0.0.1", 18444, source="manual")
+        runtime = NodeRuntime(service=service)
+        session = type(
+            "_FakeSession",
+            (),
+            {
+                "state": type(
+                    "_FakeState",
+                    (),
+                    {
+                        "handshake_complete": True,
+                        "remote_version": type("_Remote", (), {"node_id": "peer-a", "start_height": 20})(),
+                    },
+                )(),
+            },
+        )()
+        runtime._sessions[session] = SessionHandle(
+            protocol=session,
+            outbound=True,
+            endpoint=OutboundPeer("127.0.0.1", 18444),
+        )
+        events: list[str] = []
+        runtime._observe_peer_misbehavior = lambda **kwargs: events.append(str(kwargs["event"]))  # type: ignore[method-assign]
+
+        runtime._apply_session_penalty(session, error=TransportTimeoutError("Timed out while sending data to peer."), penalty=10)
+        runtime._apply_session_penalty(session, error=HandshakeFailedError("Timed out waiting for handshake completion."), penalty=10)
+
+        assert runtime._should_penalize_as_misbehavior(
+            TransportTimeoutError("Timed out while sending data to peer."),
+            handshake_complete=True,
+        ) is False
+        assert runtime._should_penalize_as_misbehavior(
+            HandshakeFailedError("Timed out waiting for handshake completion."),
+            handshake_complete=True,
+        ) is False
+        assert events == []
 
 
 def test_connect_loop_does_not_overlap_outbound_dials() -> None:
