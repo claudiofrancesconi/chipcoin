@@ -482,6 +482,7 @@ class NodeRuntime:
             endpoint = self._session_endpoint(session, handle)
             observation_direction = "inbound" if session.inbound else "outbound"
             observation_source = "discovered"
+            endpoint_reusable = False
             if handle is not None and endpoint is not None:
                 canonical_endpoint = self._canonicalize_reusable_inbound_endpoint(
                     endpoint,
@@ -500,8 +501,10 @@ class NodeRuntime:
                     handle.endpoint = canonical_endpoint
                     endpoint = canonical_endpoint
                     observation_direction = None
+                    endpoint_reusable = True
                 elif handle.outbound and endpoint is not None:
                     observation_source = self._configured_peer_source(endpoint)
+                    endpoint_reusable = True
             if endpoint is not None:
                 existing = self._known_peer_info(endpoint.host, endpoint.port)
                 self.service.record_peer_observation(
@@ -521,12 +524,13 @@ class NodeRuntime:
                     protocol_error_class=None,
                     session_started_at=self.service.time_provider(),
                 )
-                self._canonicalize_peer_aliases(
-                    remote.node_id,
-                    canonical_host=endpoint.host,
-                    canonical_port=endpoint.port,
-                    prefer_configured=handle.endpoint if handle is not None else None,
-                )
+                if endpoint_reusable:
+                    self._canonicalize_peer_aliases(
+                        remote.node_id,
+                        canonical_host=endpoint.host,
+                        canonical_port=endpoint.port,
+                        prefer_configured=handle.endpoint if handle is not None else None,
+                    )
             self.logger.info(
                 "peer handshake complete node_id=%s direction=%s height=%s",
                 remote.node_id,
@@ -1437,6 +1441,8 @@ class NodeRuntime:
             return None
         canonical = OutboundPeer(endpoint.host, get_network_config(self.service.network).default_p2p_port)
         existing = self._known_peer_info(canonical.host, canonical.port)
+        if existing is None:
+            return None
         if existing is not None and existing.node_id is not None and node_id is not None and existing.node_id != node_id:
             return None
         return canonical
