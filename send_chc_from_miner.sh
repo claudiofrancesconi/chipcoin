@@ -7,7 +7,7 @@ CLI="${ROOT_DIR}/.venv/bin/chipcoin"
 NETWORK="devnet"
 DATA_FILE="${ROOT_DIR}/run/node/node-devnet.sqlite3"
 WALLET_FILE="${ROOT_DIR}/run/wallets/chipcoin-wallet.json"
-PEER_ENDPOINT="tiltmediaconsulting.com:18444"
+PEER_ENDPOINT="chipcoinprotocol.com:18444"
 DEFAULT_FEE_CHIPBITS=1000
 
 if [[ ! -x "${CLI}" ]]; then

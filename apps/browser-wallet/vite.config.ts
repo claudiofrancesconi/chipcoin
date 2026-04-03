@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
   const repoEnv = loadEnv(mode, resolve(__dirname, "../.."), "");
   const defaultNodeEndpoint = repoEnv.BROWSER_WALLET_DEFAULT_NODE_ENDPOINT
     || repoEnv.DEFAULT_NODE_ENDPOINT
-    || "http://tiltmediaconsulting.com:8081";
+    || "https://api.chipcoinprotocol.com";
 
   return {
   plugins: [

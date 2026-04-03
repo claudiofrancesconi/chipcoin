@@ -27,9 +27,9 @@ RUNTIME_ROOT = Path.home() / "Chipcoin-runtime"
 NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.sqlite3")
 MINER_DATA_PATH = str(RUNTIME_ROOT / "data" / "miner-devnet.sqlite3")
 WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "chipcoin-wallet.json")
-PUBLIC_DEVNET_NODE_ENDPOINT = "http://tiltmediaconsulting.com:8081"
-PUBLIC_DEVNET_BOOTSTRAP_PEER = "tiltmediaconsulting.com:18444"
-PUBLIC_DEVNET_EXPLORER_URL = "http://tiltmediaconsulting.com:4173"
+PUBLIC_DEVNET_NODE_ENDPOINT = "https://api.chipcoinprotocol.com"
+PUBLIC_DEVNET_BOOTSTRAP_PEER = "chipcoinprotocol.com:18444"
+PUBLIC_DEVNET_EXPLORER_URL = "https://explorer.chipcoinprotocol.com"
 DEFAULTS = {
     "CHIPCOIN_NETWORK": "devnet",
     "COMPOSE_PROJECT_NAME": "chipcoin",

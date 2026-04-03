@@ -16,10 +16,10 @@ The current public release target is `devnet`, not mainnet.
 
 Public devnet fallback defaults included in `.env.example`:
 
-- node API: `http://tiltmediaconsulting.com:8081`
-- bootstrap peer: `tiltmediaconsulting.com:18444`
+- node API: `https://api.chipcoinprotocol.com`
+- bootstrap peer: `chipcoinprotocol.com:18444`
 - public P2P port: `18444/tcp`
-- explorer URL: `http://tiltmediaconsulting.com:4173`
+- explorer URL: `https://explorer.chipcoinprotocol.com`
 
 These are fallback defaults only. They are not required and can be replaced with your own node, peer, and inspection tooling.
 Public devnet endpoints are provided for convenience and may change or become unavailable.

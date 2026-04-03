@@ -32,9 +32,9 @@ Prefer the manual setup flow from `README.md` when:
 
 This mode uses the public devnet defaults:
 
-- node endpoint: `http://tiltmediaconsulting.com:8081`
-- bootstrap peer: `tiltmediaconsulting.com:18444`
-- explorer URL: `http://tiltmediaconsulting.com:4173`
+- node endpoint: `https://api.chipcoinprotocol.com`
+- bootstrap peer: `chipcoinprotocol.com:18444`
+- explorer URL: `https://explorer.chipcoinprotocol.com`
 
 This is the shortest path if you want to connect quickly to the public devnet environment.
 

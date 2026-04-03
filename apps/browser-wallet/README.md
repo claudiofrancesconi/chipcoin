@@ -18,10 +18,19 @@ Install:
 Connect to a node:
 - Open `Settings`
 - The first-run fallback default comes from `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT` in the repo `.env`
-- In `.env.example`, the public devnet fallback is `http://tiltmediaconsulting.com:8081`
+- In `.env.example`, the public devnet fallback is `https://api.chipcoinprotocol.com`
 - If needed, set a different Node API endpoint in `Settings`
 - After first run, the selected endpoint is persisted in extension storage
 - If the node is remote, set `CHIPCOIN_HTTP_ALLOWED_ORIGINS` on the node to allow the wallet origin
+- The wallet verifies `/v1/health` and `/v1/status` before saving a new endpoint
+- The wallet rejects endpoints on the wrong network
+- Overview and Settings show an explicit node-connection state for the currently saved endpoint
+
+Common endpoint failures:
+- invalid URL: the value is missing or malformed
+- unreachable endpoint: the node is offline, the host/port is wrong, or the request timed out
+- browser-blocked endpoint: CORS, HTTPS, or mixed-content rules may prevent the request
+- stale saved endpoint: the endpoint stays saved, but the wallet reports it as unavailable until it responds again
 
 Create, recover, or import:
 - Fresh install opens onboarding automatically

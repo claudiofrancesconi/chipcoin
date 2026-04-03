@@ -88,7 +88,7 @@ The browser wallet uses a fallback default endpoint from the repository `.env` a
 
 In `.env.example`, that fallback is set to the public devnet node:
 
-- `http://tiltmediaconsulting.com:8081`
+- `https://api.chipcoinprotocol.com`
 
 Public devnet endpoints are provided for convenience and may change or become unavailable.
 
@@ -104,8 +104,50 @@ Behavior:
 - the fallback default is used on first run only
 - the user's chosen endpoint is persisted afterward
 - manual override in the UI remains available at any time
+- the wallet verifies both `/v1/health` and `/v1/status` before saving a new endpoint
+- the wallet rejects endpoints on the wrong network
+- the Overview and Settings screens now show an explicit connection state and message for the saved endpoint
 
 If the node is remote, allow the wallet origin through `CHIPCOIN_HTTP_ALLOWED_ORIGINS`.
+
+## Endpoint Failure Modes
+
+The wallet now distinguishes these common cases more explicitly:
+
+- invalid endpoint
+  - the URL is missing or malformed
+- unreachable endpoint
+  - the node is offline, the host/port is wrong, or the request timed out
+- browser-blocked endpoint
+  - the browser may block the request because of CORS, HTTPS, or mixed-content rules
+- wrong network
+  - the endpoint answered, but not on the expected network
+- stale saved endpoint
+  - the wallet keeps the saved endpoint, but Overview and Settings show that it is currently unreachable
+
+The browser cannot always distinguish a pure network outage from a CORS or mixed-content block. In those cases the wallet says so directly instead of pretending the error is more specific than it really is.
+
+## HTTP / HTTPS / CORS Reality
+
+Practical rules:
+
+- use a full `http://` or `https://` URL
+- if the wallet is loaded on an `https://` extension/page context and the node is only reachable over insecure HTTP in a way the browser treats as mixed content, the request may be blocked
+- if the node is remote, `CHIPCOIN_HTTP_ALLOWED_ORIGINS` must allow the browser wallet origin
+- if the node returns non-JSON or an unexpected proxy/login page, the wallet now reports that as an invalid node API response
+
+When the endpoint is saved but unreachable, the wallet does not silently invent a healthy connection. It shows the last known endpoint and marks the node connection as unavailable until refresh succeeds again.
+
+## When The Node Endpoint Moves
+
+If you move the node API to a different host or port:
+
+1. open the wallet popup
+2. go to `Settings`
+3. replace the saved Node API URL
+4. save and confirm the wallet reports a connected node state again
+
+If the old endpoint is still saved, the wallet stays usable locally but address/balance/history refresh will reflect the saved endpoint until you update it.
 
 Stable API endpoints currently relied on by the wallet:
 
