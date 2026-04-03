@@ -689,18 +689,41 @@ class NodeRuntime:
                 await session.close(reason=str(error), error=error)
                 await self._drop_session(session)
                 return
+            block_requests = [item.object_hash for item in message.payload.items if item.object_type == "block"]
+            tx_requests = sum(1 for item in message.payload.items if item.object_type == "tx")
+            served_blocks = 0
+            served_txs = 0
             for item in message.payload.items:
                 if item.object_type == "block":
                     block = self.service.get_block_by_hash(item.object_hash)
                     if block is not None:
+                        served_blocks += 1
                         await session.send_message(MessageEnvelope(command="block", payload=BlockMessage(block=block)))
                 elif item.object_type == "tx":
                     transaction = self.service.get_transaction(item.object_hash)
                     if transaction is not None:
+                        served_txs += 1
                         await session.send_message(MessageEnvelope(command="tx", payload=TransactionMessage(transaction=transaction)))
+            if block_requests or tx_requests:
+                self.logger.debug(
+                    "served getdata peer=%s requested_blocks=%s served_blocks=%s requested_txs=%s served_txs=%s first_block=%s",
+                    self._format_peer_for_logs(session),
+                    len(block_requests),
+                    served_blocks,
+                    tx_requests,
+                    served_txs,
+                    block_requests[0] if block_requests else None,
+                )
             return
 
         if message.command == "block":
+            block_hash = message.payload.block.block_hash()
+            self.logger.debug(
+                "block received peer=%s block=%s inflight_before=%s",
+                self._format_peer_for_logs(session),
+                block_hash,
+                len(self._sessions.get(session).inflight_block_hashes) if self._sessions.get(session) is not None else 0,
+            )
             try:
                 result = self.sync_manager.receive_block(message.payload.block)
             except ValidationError as exc:
@@ -740,6 +763,15 @@ class NodeRuntime:
                 )
             else:
                 self._log_block_application(session, result, reorged=False)
+            self.logger.debug(
+                "block processed peer=%s block=%s accepted_blocks=%s parent_unknown=%s reorged=%s inflight_after=%s",
+                self._format_peer_for_logs(session),
+                result.block_hash,
+                result.accepted_blocks,
+                result.parent_unknown,
+                result.reorged,
+                len(self._sessions.get(session).inflight_block_hashes) if self._sessions.get(session) is not None else 0,
+            )
             self._invalidate_mining_template()
             await self._broadcast_inventory(
                 InventoryVector(object_type="block", object_hash=result.block_hash),
@@ -930,6 +962,13 @@ class NodeRuntime:
                 handle.inflight_block_hashes.add(item.object_hash)
             for start in range(0, len(items), self.max_inventory_items):
                 batch = tuple(items[start : start + self.max_inventory_items])
+                self.logger.debug(
+                    "requesting blocks peer=%s batch_count=%s first_block=%s last_block=%s",
+                    self._format_peer_for_logs(session),
+                    len(batch),
+                    batch[0].object_hash if batch else None,
+                    batch[-1].object_hash if batch else None,
+                )
                 await session.send_message(MessageEnvelope(command="getdata", payload=GetDataMessage(items=batch)))
             self.logger.info(
                 "sync scheduled block downloads peer=%s count=%s inflight=%s",
