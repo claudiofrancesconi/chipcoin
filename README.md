@@ -523,7 +523,7 @@ That produces:
 
 On first run, the browser wallet uses `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT` from your local `.env` as its initial fallback endpoint.
 
-In `.env.example`, that points to the public devnet node on Contabo. The user can override it in `Settings`, and the chosen endpoint is persisted afterward.
+In `.env.example`, that points to the public devnet node at `https://api.chipcoinprotocol.com`. The user can override it in `Settings`, and the chosen endpoint is persisted afterward.
 
 Detailed instructions:
 
