@@ -1,4 +1,4 @@
-from chipcoin.consensus.economics import block_subsidy
+from chipcoin.consensus.economics import block_subsidy, terminal_correction_height
 from chipcoin.consensus.merkle import merkle_root
 from chipcoin.consensus.models import Block, BlockHeader, OutPoint, Transaction, TxInput, TxOutput
 from chipcoin.consensus.params import MAINNET_PARAMS
@@ -207,6 +207,24 @@ def test_validate_block_rejects_coinbase_overclaim() -> None:
     )
 
     _expect_raises(ContextualValidationError, lambda: validate_block(block, context))
+
+
+def test_validate_block_accepts_terminal_correction_coinbase() -> None:
+    height = terminal_correction_height(MAINNET_PARAMS)
+    coinbase = _coinbase_transaction(block_subsidy(height, MAINNET_PARAMS))
+    transactions = (coinbase,)
+    header = _mine_easy_header("67" * 32, merkle_root([tx.txid() for tx in transactions]))
+    block = Block(header=header, transactions=transactions)
+    context = ValidationContext(
+        height=height,
+        median_time_past=1_699_999_000,
+        params=MAINNET_PARAMS,
+        utxo_view=InMemoryUtxoView(),
+        expected_previous_block_hash="67" * 32,
+        expected_bits=MAINNET_PARAMS.genesis_bits,
+    )
+
+    assert validate_block(block, context) == 0
 
 
 def test_validate_block_rejects_double_spend_within_block() -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import cmp_to_key
 from dataclasses import dataclass, replace
 
-from ..consensus.economics import miner_subsidy_chipbits, node_reward_pool_chipbits
+from ..consensus.economics import subsidy_split_chipbits
 from ..consensus.merkle import merkle_root
 from ..consensus.models import Block, BlockHeader, Transaction, TxOutput
 from ..consensus.nodes import NodeRegistryView, select_rewarded_nodes
@@ -65,7 +65,7 @@ class MiningCoordinator:
     ) -> BlockTemplate:
         """Construct a block template from chainstate and mempool."""
 
-        node_pool_chipbits = node_reward_pool_chipbits(height, self.params)
+        miner_subsidy_chipbits, node_pool_chipbits = subsidy_split_chipbits(height, self.params)
         rewarded_nodes = select_rewarded_nodes(
             node_registry_view,
             height=height,
@@ -95,7 +95,7 @@ class MiningCoordinator:
         total_fees_chipbits = sum(entry.fee for entry in selected_entries)
         distributed_node_reward_chipbits = sum(rewarded_node.reward_chipbits for rewarded_node in rewarded_nodes)
         miner_amount_chipbits = (
-            miner_subsidy_chipbits(height, self.params)
+            miner_subsidy_chipbits
             + total_fees_chipbits
             + (node_pool_chipbits - distributed_node_reward_chipbits)
         )

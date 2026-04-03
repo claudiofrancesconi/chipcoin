@@ -1954,7 +1954,7 @@ def test_node_service_accepts_transaction_and_builds_candidate_block() -> None:
         assert service.list_mempool_transactions() == [transaction]
         assert template.total_fees == 10
         assert template.block.transactions[1] == transaction
-        assert int(template.block.transactions[0].outputs[0].value) == 55 * 100_000_000 + 10
+        assert int(template.block.transactions[0].outputs[0].value) == 22 * 100_000_000 + 10
 
 
 def test_node_service_rejects_conflicting_mempool_spends_by_policy() -> None:

@@ -1,4 +1,4 @@
-from chipcoin.consensus.economics import node_reward_pool_chipbits
+from chipcoin.consensus.economics import node_reward_pool_chipbits, terminal_correction_chipbits, terminal_correction_height
 from chipcoin.consensus.nodes import InMemoryNodeRegistryView, NodeRecord, select_rewarded_nodes
 from chipcoin.consensus.params import MAINNET_PARAMS
 from chipcoin.node.mining import MiningCoordinator
@@ -42,7 +42,7 @@ def test_winner_selection_with_one_active_node() -> None:
     )
 
     assert len(winners) == 1
-    assert winners[0].reward_chipbits == 500_000_000
+    assert winners[0].reward_chipbits == 200_000_000
 
 
 def test_winner_selection_with_three_active_nodes() -> None:
@@ -55,7 +55,7 @@ def test_winner_selection_with_three_active_nodes() -> None:
     )
 
     assert len(winners) == 3
-    assert {winner.reward_chipbits for winner in winners} == {166_666_666}
+    assert {winner.reward_chipbits for winner in winners} == {66_666_666}
 
 
 def test_winner_selection_with_ten_active_nodes() -> None:
@@ -68,7 +68,7 @@ def test_winner_selection_with_ten_active_nodes() -> None:
     )
 
     assert len(winners) == 10
-    assert {winner.reward_chipbits for winner in winners} == {50_000_000}
+    assert {winner.reward_chipbits for winner in winners} == {20_000_000}
 
 
 def test_winner_selection_with_more_than_ten_active_nodes() -> None:
@@ -98,5 +98,24 @@ def test_mining_coinbase_assembly_with_three_active_nodes() -> None:
 
     coinbase = template.block.transactions[0]
     assert len(coinbase.outputs) == 4
-    assert int(coinbase.outputs[0].value) == 5_000_000_002
-    assert {int(output.value) for output in coinbase.outputs[1:]} == {166_666_666}
+    assert int(coinbase.outputs[0].value) == 2_000_000_002
+    assert {int(output.value) for output in coinbase.outputs[1:]} == {66_666_666}
+
+
+def test_terminal_correction_block_pays_only_miner() -> None:
+    registry = _registry_with_active_nodes(3)
+    coordinator = MiningCoordinator(params=MAINNET_PARAMS, time_provider=lambda: 1_700_000_000)
+    height = terminal_correction_height(MAINNET_PARAMS)
+
+    template = coordinator.build_block_template(
+        previous_block_hash="77" * 32,
+        height=height,
+        miner_address=wallet_key(0).address,
+        bits=MAINNET_PARAMS.genesis_bits,
+        mempool_entries=[],
+        node_registry_view=registry,
+    )
+
+    coinbase = template.block.transactions[0]
+    assert len(coinbase.outputs) == 1
+    assert int(coinbase.outputs[0].value) == terminal_correction_chipbits(MAINNET_PARAMS)

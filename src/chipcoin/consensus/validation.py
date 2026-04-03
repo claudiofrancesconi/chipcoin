@@ -7,7 +7,7 @@ from string import hexdigits
 
 from ..crypto.addresses import public_key_to_address
 from ..crypto.signatures import verify_digest
-from .economics import miner_subsidy_chipbits, node_reward_pool_chipbits
+from .economics import subsidy_split_chipbits
 from .hashes import double_sha256
 from .merkle import merkle_root
 from .models import Block, Transaction, TxOutput
@@ -269,8 +269,7 @@ def _validate_coinbase_distribution(
     if not coinbase_transaction.outputs:
         raise ContextualValidationError("Coinbase transaction must contain at least one output.")
 
-    miner_base_subsidy_chipbits = miner_subsidy_chipbits(height, context.params)
-    node_pool_chipbits = node_reward_pool_chipbits(height, context.params)
+    miner_base_subsidy_chipbits, node_pool_chipbits = subsidy_split_chipbits(height, context.params)
     rewarded_nodes = select_rewarded_nodes(
         context.node_registry_view,
         height=height,

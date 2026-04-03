@@ -51,9 +51,10 @@ Per-block subsidy is split into:
 
 At genesis-era parameters:
 
-- miner subsidy: `50 CHC`
-- node reward pool: `5 CHC`
-- total subsidy: `55 CHC`
+- miner subsidy: `20 CHC`
+- node reward pool: `2 CHC`
+- total subsidy: `22 CHC`
+- explicit terminal correction: one final miner-only block mints the remaining `0.06250000 CHC`
 
 Epoch and reward parameters:
 
@@ -62,12 +63,24 @@ Epoch and reward parameters:
   - retarget window: `1000` blocks
   - target block time: `120` seconds
   - coinbase maturity: `100` blocks
+  - halving interval: `250000` blocks
+  - max supply: `11000000 CHC`
 - devnet:
   - epoch length: `1000` blocks
   - retarget window: `200` blocks
   - target block time: `30` seconds
   - coinbase maturity: `10` blocks
+  - halving interval: `250000` blocks
+  - max supply: `11000000 CHC`
 - maximum rewarded nodes per block: `10`
+
+Terminal supply rule:
+
+- the normal block subsidy follows the integer halving schedule above
+- once the halving schedule reaches zero, one explicit final correction block mints the remaining tail needed to land exactly on `11000000 CHC`
+- this final correction is paid to the miner only
+- the node reward pool is `0` for that correction block
+- all later blocks mint `0`
 
 A node is active at height `H` when:
 

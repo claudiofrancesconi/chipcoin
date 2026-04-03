@@ -617,8 +617,8 @@ def test_cli_next_winners_reports_less_than_ten_nodes() -> None:
         assert payload["next_block_height"] == 1
         assert payload["active_nodes_count"] == 3
         assert len(payload["selected_winners"]) == 3
-        assert payload["reward_per_winner_chipbits"] == 166_666_666
-        assert payload["reward_per_winner_chc"] == "1.66666666"
+        assert payload["reward_per_winner_chipbits"] == 66_666_666
+        assert payload["reward_per_winner_chc"] == "0.66666666"
         assert payload["remainder_to_miner_chipbits"] == 2
 
 
@@ -646,8 +646,8 @@ def test_cli_next_winners_caps_selected_winners_at_ten() -> None:
         assert code == 0
         assert payload["active_nodes_count"] == 12
         assert len(payload["selected_winners"]) == 10
-        assert payload["reward_per_winner_chipbits"] == 50_000_000
-        assert payload["reward_per_winner_chc"] == "0.50000000"
+        assert payload["reward_per_winner_chipbits"] == 20_000_000
+        assert payload["reward_per_winner_chc"] == "0.20000000"
 
 
 def test_cli_reward_history_for_miner_address_and_empty_case() -> None:
@@ -664,8 +664,8 @@ def test_cli_reward_history_for_miner_address_and_empty_case() -> None:
         assert code == 0
         assert len(payload) == 1
         assert payload[0]["reward_type"] == "miner_subsidy"
-        assert payload[0]["amount_chipbits"] == 5_500_000_000
-        assert payload[0]["amount_chc"] == "55.00000000"
+        assert payload[0]["amount_chipbits"] == 2_200_000_000
+        assert payload[0]["amount_chc"] == "22.00000000"
         assert payload[0]["mature"] is False
         assert empty_code == 0
         assert empty_payload == []
@@ -694,8 +694,8 @@ def test_cli_reward_history_for_node_reward_address() -> None:
         assert code == 0
         assert any(entry["reward_type"] == "node_reward" for entry in payload)
         node_reward_entry = next(entry for entry in payload if entry["reward_type"] == "node_reward")
-        assert node_reward_entry["amount_chipbits"] == 166_666_666
-        assert node_reward_entry["amount_chc"] == "1.66666666"
+        assert node_reward_entry["amount_chipbits"] == 66_666_666
+        assert node_reward_entry["amount_chc"] == "0.66666666"
 
 
 def test_cli_reward_summary_for_miner_and_node_addresses() -> None:
@@ -724,10 +724,10 @@ def test_cli_reward_summary_for_miner_and_node_addresses() -> None:
         assert miner_payload["address"] == miner_address
         assert miner_payload["total_rewards_chipbits"] > 0
         assert miner_payload["total_miner_subsidy_chipbits"] > 0
-        assert miner_payload["total_node_rewards_chipbits"] == 166_666_666
+        assert miner_payload["total_node_rewards_chipbits"] == 66_666_666
         assert miner_payload["payout_count"] >= 2
         assert node_code == 0
-        assert node_payload["total_node_rewards_chipbits"] == 166_666_666
+        assert node_payload["total_node_rewards_chipbits"] == 66_666_666
         assert node_payload["total_miner_subsidy_chipbits"] == 0
 
 
@@ -792,8 +792,8 @@ def test_cli_mining_history_matches_reward_history_for_miner() -> None:
         assert mining_code == 0
         assert reward_code == 0
         assert len(mining_payload) == 2
-        assert mining_payload[0]["miner_subsidy_chipbits"] == 5_000_000_000
-        assert mining_payload[0]["miner_subsidy_chc"] == "50.00000000"
+        assert mining_payload[0]["miner_subsidy_chipbits"] == 2_000_000_000
+        assert mining_payload[0]["miner_subsidy_chc"] == "20.00000000"
         assert any(entry["reward_type"] == "miner_subsidy" for entry in reward_payload)
 
 
@@ -831,7 +831,7 @@ def test_cli_top_miners_and_top_recipients() -> None:
         assert top_miners_code == 0
         assert top_miners_payload[0]["miner_address"] == miner_a
         assert top_miners_payload[0]["blocks_mined"] == 2
-        assert top_miners_payload[0]["total_miner_subsidy_chipbits"] == 10_000_000_000
+        assert top_miners_payload[0]["total_miner_subsidy_chipbits"] == 4_000_000_000
         assert top_miners_payload[1]["miner_address"] == miner_b
         assert top_recipients_code == 0
         assert top_recipients_payload[0]["address"] == miner_a
@@ -863,7 +863,7 @@ def test_cli_top_nodes_and_node_income_summary_with_rewards() -> None:
 
         assert top_nodes_code == 0
         assert top_nodes_payload
-        assert top_nodes_payload[0]["total_node_rewards_chipbits"] == 166_666_666
+        assert top_nodes_payload[0]["total_node_rewards_chipbits"] == 66_666_666
         assert node_income_code == 0
         assert len(node_income_payload) == 1
         assert node_income_payload[0]["payout_address"] == wallet_key(1).address
@@ -879,11 +879,11 @@ def test_cli_supply_diagnostics_reflects_immature_coinbase() -> None:
         supply_code, supply_payload = _run_cli(["--data", str(db_path), "supply-diagnostics"])
 
         assert economy_code == 0
-        assert economy_payload["total_emitted_supply_chipbits"] == 5_500_000_000
+        assert economy_payload["total_emitted_supply_chipbits"] == 2_200_000_000
         assert economy_payload["circulating_spendable_supply_chipbits"] == 0
-        assert economy_payload["immature_supply_chipbits"] == 5_500_000_000
+        assert economy_payload["immature_supply_chipbits"] == 2_200_000_000
         assert supply_code == 0
-        assert supply_payload["confirmed_unspent_supply_chipbits"] == 5_500_000_000
+        assert supply_payload["confirmed_unspent_supply_chipbits"] == 2_200_000_000
         assert supply_payload["immature_utxo_count"] == 1
 
 
@@ -1066,7 +1066,7 @@ def test_cli_address_history_reports_confirmed_incoming_and_outgoing() -> None:
         service.apply_block(first_block)
         spend = signed_payment(
             OutPoint(txid=first_block.transactions[0].txid(), index=0),
-            value=5_500_000_000,
+            value=2_200_000_000,
             sender=wallet_key(0),
             recipient=recipient,
             amount=100,

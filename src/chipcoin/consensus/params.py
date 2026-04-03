@@ -28,11 +28,11 @@ class ConsensusParams:
 
 MAINNET_PARAMS = ConsensusParams(
     coinbase_maturity=100,
-    halving_interval=210_000,
-    initial_miner_subsidy_chipbits=50 * 100_000_000,
+    halving_interval=250_000,
+    initial_miner_subsidy_chipbits=20 * 100_000_000,
     node_reward_ratio_numerator=1,
     node_reward_ratio_denominator=10,
-    max_money_chipbits=21_000_000 * 100_000_000,
+    max_money_chipbits=11_000_000 * 100_000_000,
     target_block_time_seconds=120,
     difficulty_adjustment_window=1000,
     genesis_bits=0x207FFFFF,
@@ -47,11 +47,11 @@ MAINNET_PARAMS = ConsensusParams(
 
 DEVNET_PARAMS = ConsensusParams(
     coinbase_maturity=10,
-    halving_interval=210_000,
-    initial_miner_subsidy_chipbits=50 * 100_000_000,
+    halving_interval=250_000,
+    initial_miner_subsidy_chipbits=20 * 100_000_000,
     node_reward_ratio_numerator=1,
     node_reward_ratio_denominator=10,
-    max_money_chipbits=21_000_000 * 100_000_000,
+    max_money_chipbits=11_000_000 * 100_000_000,
     target_block_time_seconds=30,
     difficulty_adjustment_window=200,
     genesis_bits=0x1F0FFFFF,
