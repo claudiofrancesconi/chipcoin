@@ -70,6 +70,7 @@ class SessionHandle:
     block_stall_count: int = 0
     headers_contributed: int = 0
     blocks_contributed: int = 0
+    last_block_progress_at: float = 0.0
     addr_relay_window_started_at: float = 0.0
     addr_relay_entries_sent: int = 0
 
@@ -79,6 +80,7 @@ class NodeRuntime:
 
     _SYNC_PROGRESS_LOG_INTERVAL = 100
     _SYNC_SCHEDULER_INTERVAL = 0.25
+    _INITIAL_SYNC_STALL_GRACE_MULTIPLIER = 2.0
     _LOCAL_PEER_SEED_RETRY_INTERVAL = 30.0
     _MAX_LOCAL_PEER_SEED_IMPORTS = 8
     _SEVERE_MISBEHAVIOR_DELTA = 100
@@ -738,6 +740,7 @@ class NodeRuntime:
             if handle is not None:
                 handle.blocks_contributed += result.accepted_blocks
                 handle.block_stall_count = 0
+                handle.last_block_progress_at = asyncio.get_running_loop().time()
             if result.parent_unknown is not None:
                 self.logger.info(
                     "sync orphan block peer=%s block=%s parent=%s",
@@ -987,7 +990,6 @@ class NodeRuntime:
             handle = None if session is None else self._sessions.get(session)
             if handle is not None:
                 handle.inflight_block_hashes.discard(request.block_hash)
-                handle.block_stall_count += 1
             self.logger.info(
                 "sync block request stalled peer=%s block=%s attempt=%s action=reassign",
                 request.peer_id,
@@ -996,6 +998,15 @@ class NodeRuntime:
             )
             if session is None or handle is None:
                 continue
+            if self._should_tolerate_stalled_block_request(handle=handle, now=now):
+                self.logger.info(
+                    "sync stall tolerated peer=%s block=%s recent_progress_seconds=%s",
+                    request.peer_id,
+                    request.block_hash,
+                    round(now - handle.last_block_progress_at, 3),
+                )
+                continue
+            handle.block_stall_count += 1
             penalty = BlockRequestStalledError("block request stalled")
             self._apply_session_penalty(session, error=penalty, penalty=10)
             if handle.block_stall_count >= self._BLOCK_STALL_DISCONNECT_THRESHOLD:
@@ -1102,6 +1113,29 @@ class NodeRuntime:
         """Publish the latest sync snapshot through the service diagnostics surface."""
 
         self.service.set_runtime_sync_status(self.sync_manager.sync_status())
+
+    def _is_catchup_sync_active(self) -> bool:
+        """Return whether the node is still catching up to the best known header tip."""
+
+        best_header_height = self.sync_manager.best_header_height()
+        if best_header_height is None:
+            return False
+        local_tip = self.service.chain_tip()
+        local_height = -1 if local_tip is None else local_tip.height
+        return best_header_height > local_height
+
+    def _should_tolerate_stalled_block_request(self, *, handle: SessionHandle, now: float) -> bool:
+        """Return whether one stalled request should be tolerated during active catch-up."""
+
+        if not self._is_catchup_sync_active():
+            return False
+        if handle.last_block_progress_at <= 0.0:
+            return False
+        grace_seconds = max(
+            self.block_request_timeout_seconds,
+            self.read_timeout,
+        ) * self._INITIAL_SYNC_STALL_GRACE_MULTIPLIER
+        return (now - handle.last_block_progress_at) <= grace_seconds
 
     async def _request_headers(self, session: PeerProtocol, *, locator_hashes: tuple[str, ...] | None = None) -> None:
         """Request headers from a peer using the local block locator."""
