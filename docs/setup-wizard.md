@@ -45,7 +45,7 @@ Public devnet endpoints are provided for convenience and may change or become un
 This mode prompts for:
 
 - node endpoint
-- bootstrap peer
+- startup peer or peers
 - explorer URL
 
 Use it when you want guided setup but do not want the public defaults.
@@ -88,6 +88,16 @@ The wizard writes:
 - `.env` in the repository root
 - runtime data file paths under the configured runtime directory
 - miner wallet file under the configured runtime directory when needed
+
+The wizard does not create:
+
+- browser wallet extension state
+- explorer browser runtime overrides
+- a mandatory bootstrap dependency
+
+Bootstrap remains optional. If you later run with a healthy persisted peerbook or manually configured peers, bootstrap is no longer required for normal operation.
+
+For clean installs, prefer multiple known-good startup peers when you have them. The wizard now writes `DIRECT_PEERS` for the primary startup path and keeps `DIRECT_PEER` only for compatibility with older configurations.
 
 After the wizard completes, the normal next step is:
 

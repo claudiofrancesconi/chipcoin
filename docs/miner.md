@@ -19,8 +19,10 @@ Relevant `.env` keys:
 - `MINER_WALLET_FILE`
 - `MINER_P2P_BIND_PORT`
 - `MINING_MIN_INTERVAL_SECONDS`
+- `DIRECT_PEERS`
 - `DIRECT_PEER`
 - `BOOTSTRAP_URL`
+- `INITIAL_SYNC_CONSERVATIVE_DEFAULTS`
 
 ## Wallet Requirement
 
@@ -65,4 +67,6 @@ docker compose logs -f miner
 - The miner wallet is operationally used in the current public release.
 - Rewards are paid to the address derived from `MINER_WALLET_FILE`.
 - Reward redistribution can be done later with standard wallet transactions.
+- `MINER_DATA_PATH` must be a writable SQLite file path, not a directory.
+- For clean installs, prefer `DIRECT_PEERS` with multiple known-good startup peers when you have them.
 - The recommended runtime directory is outside the repo, for example `/home/komarek/Chipcoin-runtime`.

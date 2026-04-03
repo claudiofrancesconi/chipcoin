@@ -27,6 +27,8 @@ Local node state:
 - `/runtime/node.sqlite3` inside Docker
 - the host file mapped from `NODE_DATA_PATH`
 
+`NODE_DATA_PATH` must be a writable SQLite file path. If you point it at a directory, the container now fails early with an explicit error instead of crashing later inside SQLite.
+
 Network state:
 
 - remote peers
@@ -44,8 +46,10 @@ Relevant `.env` keys:
 - `NODE_P2P_BIND_PORT`
 - `NODE_HTTP_BIND_PORT`
 - `CHIPCOIN_HTTP_ALLOWED_ORIGINS`
+- `DIRECT_PEERS`
 - `DIRECT_PEER`
 - `BOOTSTRAP_URL`
+- `BOOTSTRAP_PEER_LIMIT`
 - `PEER_DISCOVERY_ENABLED`
 - `PEERBOOK_MAX_SIZE`
 - `PEER_ADDR_MAX_PER_MESSAGE`
@@ -62,6 +66,7 @@ Relevant `.env` keys:
 - `BLOCK_REQUEST_TIMEOUT_SECONDS`
 - `HEADERS_SYNC_PARALLEL_PEERS`
 - `HEADERS_SYNC_START_HEIGHT_GAP_THRESHOLD`
+- `INITIAL_SYNC_CONSERVATIVE_DEFAULTS`
 - `PEER_MISBEHAVIOR_WARNING_THRESHOLD`
 - `PEER_MISBEHAVIOR_DISCONNECT_THRESHOLD`
 - `PEER_MISBEHAVIOR_BAN_THRESHOLD`
@@ -223,7 +228,7 @@ Chipcoin uses bounded `getaddr` / `addr` discovery plus a persistent SQLite peer
 
 Peer source classes:
 
-- `manual`: explicitly configured peers such as `DIRECT_PEER` or `chipcoin add-peer`
+- `manual`: explicitly configured peers such as `DIRECT_PEERS`, `DIRECT_PEER`, or `chipcoin add-peer`
 - `seed`: bootstrap-derived or local-seeding fallback peers
 - `discovered`: peers learned from network gossip or successful inbound/outbound observations
 
@@ -317,6 +322,15 @@ Relevant `.env` knobs:
 - `HEADERS_SYNC_START_HEIGHT_GAP_THRESHOLD`
 
 The defaults are intentionally conservative and should work for small devnet operators without tuning.
+
+For pristine databases, the container can automatically apply an even more conservative first-sync profile when startup peers are configured:
+
+- `BLOCK_MAX_INFLIGHT_PER_PEER=4`
+- `BLOCK_REQUEST_TIMEOUT_SECONDS=60`
+- `HEADERS_SYNC_PARALLEL_PEERS=1`
+- `BLOCK_DOWNLOAD_WINDOW_SIZE=32`
+
+This temporary profile is enabled by `INITIAL_SYNC_CONSERVATIVE_DEFAULTS=true` and only applies when the local SQLite file is still empty.
 
 Useful operator checks:
 
@@ -419,6 +433,12 @@ Look for:
 - `sync.stalled_peers`
 - repeated `sync block request stalled ... action=reassign`
 
+If this happens on a brand-new node:
+
+- verify that `NODE_DATA_PATH` is a file, not a directory
+- prefer `DIRECT_PEERS` with multiple known-good startup peers
+- keep `INITIAL_SYNC_CONSERVATIVE_DEFAULTS=true` unless you have already tuned the network
+
 Typical causes:
 
 - no reachable peers
@@ -441,12 +461,12 @@ chipcoin --data /path/to/node.sqlite3 peer-summary
 
 Typical recovery:
 
-- add a manual peer with `DIRECT_PEER` or `chipcoin add-peer`
+- add a manual peer with `DIRECT_PEERS`, `DIRECT_PEER`, or `chipcoin add-peer`
 - let the node reconnect and relearn peers
 
 If you intentionally want an isolated node:
 
-- leave `DIRECT_PEER` and `BOOTSTRAP_URL` empty
+- leave `DIRECT_PEERS`, `DIRECT_PEER`, and `BOOTSTRAP_URL` empty
 - expect `peer_count=0` until inbound peers arrive or you add peers manually
 
 ### Peer Banned Unexpectedly
@@ -606,7 +626,8 @@ Basic validation:
 
 ## Notes
 
-- `DIRECT_PEER` can be used for explicit peering.
-- Leave both `DIRECT_PEER` and `BOOTSTRAP_URL` empty for an isolated node.
+- `DIRECT_PEERS` is the preferred way to define one or more explicit startup peers.
+- `DIRECT_PEER` remains supported for compatibility with older configs.
+- Leave `DIRECT_PEERS`, `DIRECT_PEER`, and `BOOTSTRAP_URL` empty for an isolated node.
 - Public browser wallet access may require `CHIPCOIN_HTTP_ALLOWED_ORIGINS` to include the wallet origin.
 - The recommended runtime directory is outside the repo, for example `/home/komarek/Chipcoin-runtime`.

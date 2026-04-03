@@ -32,31 +32,64 @@ print(address)
 PY
 }
 
-resolve_peer() {
-  if [[ -n "${DIRECT_PEER:-}" ]]; then
-    DISCOVERY_SOURCE="manual"
-    printf '%s' "$DIRECT_PEER"
-    return 0
+normalize_manual_peers() {
+  DIRECT_PEER_VALUE="${DIRECT_PEER:-}" DIRECT_PEERS_VALUE="${DIRECT_PEERS:-}" python3 - <<'PY'
+import os
+import re
+
+raw_values = [
+    os.environ.get("DIRECT_PEERS_VALUE", ""),
+    os.environ.get("DIRECT_PEER_VALUE", ""),
+]
+pattern = re.compile(r"^[^:\s]+:\d+$")
+seen: set[str] = set()
+result: list[str] = []
+
+for raw in raw_values:
+    for chunk in re.split(r"[\s,]+", raw.strip()):
+        if not chunk:
+            continue
+        if not pattern.match(chunk):
+            raise SystemExit(f"Invalid peer format: {chunk}. Expected host:port.")
+        if chunk not in seen:
+            seen.add(chunk)
+            result.append(chunk)
+
+print("\n".join(result))
+PY
+}
+
+resolve_peers() {
+  local peers=""
+  if peers="$(normalize_manual_peers)"; then
+    if [[ -n "$peers" ]]; then
+      DISCOVERY_SOURCE="manual"
+      printf '%s\n' "$peers"
+      return 0
+    fi
+  else
+    return 1
   fi
 
   if [[ -n "${BOOTSTRAP_URL:-}" ]]; then
-    local peer=""
-    if peer=$(BOOTSTRAP_URL="$BOOTSTRAP_URL" CHIPCOIN_NETWORK="$CHIPCOIN_NETWORK" python3 - <<'PY'
+    if peers=$(BOOTSTRAP_URL="$BOOTSTRAP_URL" CHIPCOIN_NETWORK="$CHIPCOIN_NETWORK" BOOTSTRAP_PEER_LIMIT="${BOOTSTRAP_PEER_LIMIT:-4}" python3 - <<'PY'
 import os
 
 from chipcoin.interfaces.seed_client import SeedClient
 
 base_url = os.environ["BOOTSTRAP_URL"]
 network = os.environ["CHIPCOIN_NETWORK"]
+peer_limit = max(1, int(os.environ.get("BOOTSTRAP_PEER_LIMIT", "4")))
 client = SeedClient(base_url)
 peers = client.list_peers(network)
 if not peers:
     raise SystemExit(1)
-print(f"{peers[0].host}:{peers[0].port}")
+for peer in peers[:peer_limit]:
+    print(f"{peer.host}:{peer.port}")
 PY
 ); then
       DISCOVERY_SOURCE="seed"
-      printf '%s' "$peer"
+      printf '%s\n' "$peers"
       return 0
     fi
     warn "Bootstrap discovery failed or returned no peers. Starting isolated."
@@ -65,9 +98,59 @@ PY
   return 1
 }
 
-ensure_file_parent() {
+ensure_sqlite_file() {
   local path="$1"
+  local label="$2"
   mkdir -p "$(dirname "$path")"
+  if [[ -e "$path" && -d "$path" ]]; then
+    die "${label} path ${path} is a directory. Expected a writable SQLite file path."
+  fi
+  if [[ ! -e "$path" ]]; then
+    touch "$path" || die "Could not create ${label} file at ${path}."
+  fi
+  if [[ ! -f "$path" ]]; then
+    die "${label} path ${path} is not a regular file."
+  fi
+  if [[ ! -w "$path" ]]; then
+    die "${label} file ${path} is not writable by the current user."
+  fi
+}
+
+sqlite_file_is_pristine() {
+  local path="$1"
+  [[ ! -s "$path" ]]
+}
+
+apply_initial_sync_defaults_if_needed() {
+  local sqlite_path="$1"
+  local role_label="$2"
+  local startup_peer_count="$3"
+
+  local enabled="${INITIAL_SYNC_CONSERVATIVE_DEFAULTS:-true}"
+  if [[ "$enabled" != "true" && "$enabled" != "1" ]]; then
+    return 0
+  fi
+  if [[ "$startup_peer_count" -le 0 ]]; then
+    return 0
+  fi
+  if ! sqlite_file_is_pristine "$sqlite_path"; then
+    return 0
+  fi
+
+  if [[ -z "${BLOCK_MAX_INFLIGHT_PER_PEER+x}" ]]; then
+    BLOCK_MAX_INFLIGHT_PER_PEER=4
+  fi
+  if [[ -z "${BLOCK_REQUEST_TIMEOUT_SECONDS+x}" ]]; then
+    BLOCK_REQUEST_TIMEOUT_SECONDS=60
+  fi
+  if [[ -z "${HEADERS_SYNC_PARALLEL_PEERS+x}" ]]; then
+    HEADERS_SYNC_PARALLEL_PEERS=1
+  fi
+  if [[ -z "${BLOCK_DOWNLOAD_WINDOW_SIZE+x}" ]]; then
+    BLOCK_DOWNLOAD_WINDOW_SIZE=32
+  fi
+
+  log "Applying conservative initial sync defaults role=${role_label} startup_peers=${startup_peer_count} block_max_inflight_per_peer=${BLOCK_MAX_INFLIGHT_PER_PEER} block_request_timeout_seconds=${BLOCK_REQUEST_TIMEOUT_SECONDS} headers_sync_parallel_peers=${HEADERS_SYNC_PARALLEL_PEERS} block_download_window_size=${BLOCK_DOWNLOAD_WINDOW_SIZE}"
 }
 
 start_http_api() {
@@ -85,14 +168,19 @@ run_node() {
   : "${NODE_P2P_BIND_PORT:?missing NODE_P2P_BIND_PORT}"
   : "${NODE_HTTP_BIND_PORT:?missing NODE_HTTP_BIND_PORT}"
 
-  ensure_file_parent /runtime/node.sqlite3
-  touch /runtime/node.sqlite3
+  ensure_sqlite_file /runtime/node.sqlite3 "Node SQLite"
   log "Starting node network=${CHIPCOIN_NETWORK} p2p_port=${NODE_P2P_BIND_PORT} http_port=${NODE_HTTP_BIND_PORT} node_wallet_runtime=not_used_in_phase_1"
 
   local -a peer_args=()
-  if peer="$(resolve_peer)"; then
-    log "Node discovery target=${peer}"
-    peer_args=(--peer "$peer" --peer-source "${DISCOVERY_SOURCE:-manual}")
+  local startup_peer_count=0
+  if peers="$(resolve_peers)"; then
+    while IFS= read -r peer; do
+      [[ -n "$peer" ]] || continue
+      peer_args+=(--peer "$peer")
+      startup_peer_count=$((startup_peer_count + 1))
+    done <<< "$peers"
+    peer_args+=(--peer-source "${DISCOVERY_SOURCE:-manual}")
+    log "Node discovery target=${DISCOVERY_SOURCE:-manual}:${startup_peer_count}_peer(s)"
   else
     log "Node discovery target=isolated"
     if [[ "${PEER_DISCOVERY_ENABLED:-true}" != "true" && "${PEER_DISCOVERY_ENABLED:-true}" != "1" ]]; then
@@ -101,6 +189,8 @@ run_node() {
       warn "No startup peer was found. Node will rely on the persisted peerbook or inbound peers."
     fi
   fi
+
+  apply_initial_sync_defaults_if_needed /runtime/node.sqlite3 "node" "$startup_peer_count"
 
   if awk 'BEGIN { exit !('"${BLOCK_REQUEST_TIMEOUT_SECONDS:-15}"' < 5) }'; then
     warn "BLOCK_REQUEST_TIMEOUT_SECONDS=${BLOCK_REQUEST_TIMEOUT_SECONDS:-15} is unusually low and may cause unnecessary block reassignment churn."
@@ -152,21 +242,28 @@ run_miner() {
   : "${MINING_MIN_INTERVAL_SECONDS:?missing MINING_MIN_INTERVAL_SECONDS}"
 
   [[ -f /runtime/miner-wallet.json ]] || die "Miner wallet file is missing at /runtime/miner-wallet.json."
-  ensure_file_parent /runtime/miner.sqlite3
-  touch /runtime/miner.sqlite3
+  ensure_sqlite_file /runtime/miner.sqlite3 "Miner SQLite"
 
   local miner_address
   miner_address="$(wallet_address /runtime/miner-wallet.json)"
   log "Starting miner network=${CHIPCOIN_NETWORK} p2p_port=${MINER_P2P_BIND_PORT} wallet_address=${miner_address}"
 
   local -a peer_args=()
-  if peer="$(resolve_peer)"; then
-    log "Miner discovery target=${peer}"
-    peer_args=(--peer "$peer" --peer-source "${DISCOVERY_SOURCE:-manual}")
+  local startup_peer_count=0
+  if peers="$(resolve_peers)"; then
+    while IFS= read -r peer; do
+      [[ -n "$peer" ]] || continue
+      peer_args+=(--peer "$peer")
+      startup_peer_count=$((startup_peer_count + 1))
+    done <<< "$peers"
+    peer_args+=(--peer-source "${DISCOVERY_SOURCE:-manual}")
+    log "Miner discovery target=${DISCOVERY_SOURCE:-manual}:${startup_peer_count}_peer(s)"
   else
     log "Miner discovery target=isolated"
     warn "No startup peer was found. Miner will rely on its peerbook and local node seeding fallback if available."
   fi
+
+  apply_initial_sync_defaults_if_needed /runtime/miner.sqlite3 "miner" "$startup_peer_count"
 
   if awk 'BEGIN { exit !('"${BLOCK_REQUEST_TIMEOUT_SECONDS:-15}"' < 5) }'; then
     warn "BLOCK_REQUEST_TIMEOUT_SECONDS=${BLOCK_REQUEST_TIMEOUT_SECONDS:-15} is unusually low and may cause unnecessary block reassignment churn."

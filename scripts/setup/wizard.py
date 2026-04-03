@@ -6,6 +6,7 @@ from __future__ import annotations
 import getpass
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -47,8 +48,11 @@ DEFAULTS = {
     "MINER_P2P_BIND_PORT": "18445",
     "MINING_MIN_INTERVAL_SECONDS": "1.0",
     "BROWSER_WALLET_DEFAULT_NODE_ENDPOINT": PUBLIC_DEVNET_NODE_ENDPOINT,
+    "DIRECT_PEERS": "",
     "DIRECT_PEER": "",
     "BOOTSTRAP_URL": "",
+    "BOOTSTRAP_PEER_LIMIT": "4",
+    "INITIAL_SYNC_CONSERVATIVE_DEFAULTS": "true",
 }
 
 
@@ -120,13 +124,32 @@ def _ask_choice(prompt: str, options: dict[str, str], default: str) -> str:
         print("Invalid selection. Please choose one of the listed options.")
 
 
-def _ask_direct_peer() -> str:
+def _parse_peer_list(value: str) -> list[str]:
+    peers: list[str] = []
+    for candidate in re.split(r"[\s,]+", value.strip()):
+        if not candidate:
+            continue
+        host, sep, port = candidate.rpartition(":")
+        if not sep or not host or not port.isdigit():
+            raise ValueError("Expected host:port entries separated by commas or spaces.")
+        if candidate not in peers:
+            peers.append(candidate)
+    return peers
+
+
+def _ask_direct_peers(prompt: str, default: str) -> str:
     while True:
-        answer = input("Enter the direct peer as host:port: ").strip()
-        host, sep, port = answer.rpartition(":")
-        if sep and host and port.isdigit():
-            return answer
-        print("Invalid peer format. Expected host:port.")
+        answer = input(f"{prompt} [{default}]: ").strip()
+        if not answer:
+            return default
+        try:
+            peers = _parse_peer_list(answer)
+        except ValueError as exc:
+            print(f"Invalid peer format. {exc}")
+            continue
+        if peers:
+            return ",".join(peers)
+        print("Enter at least one host:port entry or leave the field empty.")
 
 
 def _ask_http_url(prompt: str, default: str) -> str:
@@ -156,24 +179,27 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str) -> None:
         env_values["DEFAULT_BOOTSTRAP_PEER"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
         env_values["DEFAULT_EXPLORER_URL"] = PUBLIC_DEVNET_EXPLORER_URL
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = PUBLIC_DEVNET_NODE_ENDPOINT
-        env_values["DIRECT_PEER"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
+        env_values["DIRECT_PEERS"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
+        env_values["DIRECT_PEER"] = ""
         return
 
     if setup_mode == "custom":
         node_endpoint = _ask_http_url("Enter node endpoint", PUBLIC_DEVNET_NODE_ENDPOINT)
-        bootstrap_peer = _ask_optional_peer("Enter bootstrap peer", PUBLIC_DEVNET_BOOTSTRAP_PEER)
+        bootstrap_peer = _ask_direct_peers("Enter startup peer(s)", PUBLIC_DEVNET_BOOTSTRAP_PEER)
         explorer_url = _ask_http_url("Enter explorer URL", PUBLIC_DEVNET_EXPLORER_URL)
         env_values["DEFAULT_NODE_ENDPOINT"] = node_endpoint
-        env_values["DEFAULT_BOOTSTRAP_PEER"] = bootstrap_peer
+        env_values["DEFAULT_BOOTSTRAP_PEER"] = bootstrap_peer.split(",", 1)[0]
         env_values["DEFAULT_EXPLORER_URL"] = explorer_url
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = node_endpoint
-        env_values["DIRECT_PEER"] = bootstrap_peer
+        env_values["DIRECT_PEERS"] = bootstrap_peer
+        env_values["DIRECT_PEER"] = ""
         return
 
     env_values["DEFAULT_NODE_ENDPOINT"] = "http://127.0.0.1:8081"
     env_values["DEFAULT_BOOTSTRAP_PEER"] = ""
     env_values["DEFAULT_EXPLORER_URL"] = ""
     env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = "http://127.0.0.1:8081"
+    env_values["DIRECT_PEERS"] = ""
     env_values["DIRECT_PEER"] = ""
 
 
@@ -183,6 +209,7 @@ def _print_public_reachability_note() -> None:
     print("  - outbound-only nodes can still connect and sync")
     print("  - publicly reachable nodes are strongly preferred for network health")
     print("  - when possible, open and forward TCP 18444 for the node P2P listener")
+    print("  - for clean installs, prefer multiple startup peers when available")
     print()
 
 
@@ -220,11 +247,20 @@ def _handle_wallet(wallet_mode: str, wallet_path: Path) -> tuple[str, str]:
     return wallet_key.address, wallet_key.private_key.hex()
 
 
+def _prepare_sqlite_file(path: Path, label: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.is_dir():
+        _die(f"{label} path points to a directory, but a writable SQLite file is required: {path}")
+    path.touch(exist_ok=True)
+    if not path.is_file():
+        _die(f"{label} path is not a regular file: {path}")
+    if not os.access(path, os.W_OK):
+        _die(f"{label} file is not writable: {path}")
+
+
 def _prepare_runtime_files(env_values: dict[str, str]) -> None:
-    for configured_path in (env_values["NODE_DATA_PATH"], env_values["MINER_DATA_PATH"]):
-        path = Path(configured_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch(exist_ok=True)
+    _prepare_sqlite_file(Path(env_values["NODE_DATA_PATH"]), "Node data")
+    _prepare_sqlite_file(Path(env_values["MINER_DATA_PATH"]), "Miner data")
 
 
 def _write_env(values: dict[str, str]) -> None:
@@ -274,6 +310,12 @@ def _print_success(
         print(f"Default bootstrap peer: {env_values['DEFAULT_BOOTSTRAP_PEER']}")
     else:
         print("Default bootstrap peer: none")
+    if env_values["DIRECT_PEERS"]:
+        print(f"Startup peers: {env_values['DIRECT_PEERS']}")
+    elif env_values["DIRECT_PEER"]:
+        print(f"Startup peer (legacy): {env_values['DIRECT_PEER']}")
+    else:
+        print("Startup peers: none")
     if env_values["DEFAULT_EXPLORER_URL"]:
         print(f"Default explorer URL: {env_values['DEFAULT_EXPLORER_URL']}")
     else:

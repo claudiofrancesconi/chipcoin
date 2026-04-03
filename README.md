@@ -160,10 +160,13 @@ At minimum, set real values for:
 - `MINER_DATA_PATH`
 - `MINER_WALLET_FILE`
 
+`NODE_DATA_PATH` and `MINER_DATA_PATH` must be writable SQLite file paths. Do not point them at directories.
+
 For the shortest first run, you can either keep the public devnet defaults from `.env.example` or replace them with your own values.
 
 If you want a fully local first run, set:
 
+- `DIRECT_PEERS=`
 - `DIRECT_PEER=`
 - `BOOTSTRAP_URL=`
 - `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT=http://127.0.0.1:8081`
@@ -229,6 +232,8 @@ Peer discovery defaults in `.env.example`:
 
 After a node has learned the network, the persisted peerbook becomes the primary reconnection source. Manual peers and bootstrap-derived seed peers remain supported, but are treated as fallback startup inputs when healthy persisted peers already exist.
 
+For clean installs, prefer `DIRECT_PEERS` with two or more known-good `host:port` entries when you have them. `DIRECT_PEER` is still supported for compatibility, but a single flaky startup peer can make initial sync unnecessarily fragile.
+
 Headers-first sync defaults in `.env.example`:
 
 - `HEADERS_SYNC_ENABLED=true`
@@ -238,6 +243,8 @@ Headers-first sync defaults in `.env.example`:
 - `BLOCK_REQUEST_TIMEOUT_SECONDS=15`
 - `HEADERS_SYNC_PARALLEL_PEERS=2`
 - `HEADERS_SYNC_START_HEIGHT_GAP_THRESHOLD=1`
+- `INITIAL_SYNC_CONSERVATIVE_DEFAULTS=true`
+- `BOOTSTRAP_PEER_LIMIT=4`
 
 With these defaults, the node:
 
@@ -248,6 +255,8 @@ With these defaults, the node:
 5. reassigns stalled block requests after timeout
 
 Full block validation still happens before chain acceptance. Headers-first sync is a download strategy, not a consensus shortcut.
+
+When the local SQLite database is pristine and the runtime has at least one startup peer, the container automatically applies a more conservative initial-sync profile unless you disable `INITIAL_SYNC_CONSERVATIVE_DEFAULTS`. This lowers the initial per-peer block inflight cap and raises the block request timeout to make first syncs less brittle on small devnets.
 
 ## Setup Wizard
 
