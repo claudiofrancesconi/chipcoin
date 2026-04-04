@@ -48,6 +48,13 @@ DEFAULTS = {
     "MINER_P2P_BIND_PORT": "18445",
     "MINING_MIN_INTERVAL_SECONDS": "1.0",
     "BROWSER_WALLET_DEFAULT_NODE_ENDPOINT": PUBLIC_DEVNET_NODE_ENDPOINT,
+    "NODE_DIRECT_PEERS": "",
+    "NODE_DIRECT_PEER": "",
+    "NODE_BOOTSTRAP_URL": "",
+    "MINER_DIRECT_PEERS": "node:18444",
+    "MINER_DIRECT_PEER": "",
+    "MINER_BOOTSTRAP_URL": "",
+    "MINER_DEFAULT_DIRECT_PEERS": "node:18444",
     "DIRECT_PEERS": "",
     "DIRECT_PEER": "",
     "BOOTSTRAP_URL": "",
@@ -90,7 +97,7 @@ def main() -> int:
 
     env_values = dict(DEFAULTS)
     env_values["CHIPCOIN_NETWORK"] = network
-    _apply_setup_mode(env_values, setup_mode)
+    _apply_setup_mode(env_values, setup_mode, role)
     _prepare_runtime_files(env_values)
 
     _write_env(env_values)
@@ -173,14 +180,23 @@ def _ask_optional_peer(prompt: str, default: str) -> str:
         print("Invalid peer format. Expected host:port.")
 
 
-def _apply_setup_mode(env_values: dict[str, str], setup_mode: str) -> None:
+def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) -> None:
+    miner_peer_default = PUBLIC_DEVNET_BOOTSTRAP_PEER if role == "miner" else "node:18444"
+
     if setup_mode == "quick":
         env_values["DEFAULT_NODE_ENDPOINT"] = PUBLIC_DEVNET_NODE_ENDPOINT
         env_values["DEFAULT_BOOTSTRAP_PEER"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
         env_values["DEFAULT_EXPLORER_URL"] = PUBLIC_DEVNET_EXPLORER_URL
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = PUBLIC_DEVNET_NODE_ENDPOINT
-        env_values["DIRECT_PEERS"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
+        env_values["NODE_DIRECT_PEERS"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
+        env_values["NODE_DIRECT_PEER"] = ""
+        env_values["NODE_BOOTSTRAP_URL"] = ""
+        env_values["MINER_DIRECT_PEERS"] = miner_peer_default
+        env_values["MINER_DIRECT_PEER"] = ""
+        env_values["MINER_BOOTSTRAP_URL"] = ""
+        env_values["DIRECT_PEERS"] = ""
         env_values["DIRECT_PEER"] = ""
+        env_values["BOOTSTRAP_URL"] = ""
         return
 
     if setup_mode == "custom":
@@ -191,16 +207,30 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str) -> None:
         env_values["DEFAULT_BOOTSTRAP_PEER"] = bootstrap_peer.split(",", 1)[0]
         env_values["DEFAULT_EXPLORER_URL"] = explorer_url
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = node_endpoint
-        env_values["DIRECT_PEERS"] = bootstrap_peer
+        env_values["NODE_DIRECT_PEERS"] = bootstrap_peer
+        env_values["NODE_DIRECT_PEER"] = ""
+        env_values["NODE_BOOTSTRAP_URL"] = ""
+        env_values["MINER_DIRECT_PEERS"] = bootstrap_peer if role == "miner" else "node:18444"
+        env_values["MINER_DIRECT_PEER"] = ""
+        env_values["MINER_BOOTSTRAP_URL"] = ""
+        env_values["DIRECT_PEERS"] = ""
         env_values["DIRECT_PEER"] = ""
+        env_values["BOOTSTRAP_URL"] = ""
         return
 
     env_values["DEFAULT_NODE_ENDPOINT"] = "http://127.0.0.1:8081"
     env_values["DEFAULT_BOOTSTRAP_PEER"] = ""
     env_values["DEFAULT_EXPLORER_URL"] = ""
     env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = "http://127.0.0.1:8081"
+    env_values["NODE_DIRECT_PEERS"] = ""
+    env_values["NODE_DIRECT_PEER"] = ""
+    env_values["NODE_BOOTSTRAP_URL"] = ""
+    env_values["MINER_DIRECT_PEERS"] = "" if role == "miner" else "node:18444"
+    env_values["MINER_DIRECT_PEER"] = ""
+    env_values["MINER_BOOTSTRAP_URL"] = ""
     env_values["DIRECT_PEERS"] = ""
     env_values["DIRECT_PEER"] = ""
+    env_values["BOOTSTRAP_URL"] = ""
 
 
 def _print_public_reachability_note() -> None:

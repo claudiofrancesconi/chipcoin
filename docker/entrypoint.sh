@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROLE="${1:?missing role}"
+UNSET_SENTINEL="__CHIPCOIN_UNSET__"
 
 log() {
   printf 'INFO %s\n' "$*"
@@ -57,6 +58,61 @@ for raw in raw_values:
 
 print("\n".join(result))
 PY
+}
+
+read_optional_env() {
+  local name="$1"
+  local value="${!name-$UNSET_SENTINEL}"
+  if [[ "$value" == "$UNSET_SENTINEL" ]]; then
+    return 1
+  fi
+  printf '%s' "$value"
+}
+
+role_discovery_value() {
+  local preferred_name="$1"
+  local fallback_name="$2"
+  local default_name="${3:-}"
+  local value=""
+
+  if value="$(read_optional_env "$preferred_name")"; then
+    printf '%s' "$value"
+    return 0
+  fi
+  if value="$(read_optional_env "$fallback_name")"; then
+    printf '%s' "$value"
+    return 0
+  fi
+  if [[ -n "$default_name" ]] && value="$(read_optional_env "$default_name")"; then
+    printf '%s' "$value"
+    return 0
+  fi
+  printf ''
+}
+
+configure_discovery_env_for_role() {
+  local role="$1"
+  case "$role" in
+    node)
+      export DIRECT_PEERS
+      DIRECT_PEERS="$(role_discovery_value NODE_DIRECT_PEERS DIRECT_PEERS)"
+      export DIRECT_PEER
+      DIRECT_PEER="$(role_discovery_value NODE_DIRECT_PEER DIRECT_PEER)"
+      export BOOTSTRAP_URL
+      BOOTSTRAP_URL="$(role_discovery_value NODE_BOOTSTRAP_URL BOOTSTRAP_URL)"
+      ;;
+    miner)
+      export DIRECT_PEERS
+      DIRECT_PEERS="$(role_discovery_value MINER_DIRECT_PEERS DIRECT_PEERS MINER_DEFAULT_DIRECT_PEERS)"
+      export DIRECT_PEER
+      DIRECT_PEER="$(role_discovery_value MINER_DIRECT_PEER DIRECT_PEER)"
+      export BOOTSTRAP_URL
+      BOOTSTRAP_URL="$(role_discovery_value MINER_BOOTSTRAP_URL BOOTSTRAP_URL)"
+      ;;
+    *)
+      die "Unsupported discovery role: ${role}"
+      ;;
+  esac
 }
 
 resolve_peers() {
@@ -172,6 +228,7 @@ run_node() {
   : "${NODE_HTTP_BIND_PORT:?missing NODE_HTTP_BIND_PORT}"
 
   ensure_sqlite_file /runtime/node.sqlite3 "Node SQLite"
+  configure_discovery_env_for_role node
   log "Starting node network=${CHIPCOIN_NETWORK} p2p_port=${NODE_P2P_BIND_PORT} http_port=${NODE_HTTP_BIND_PORT} node_wallet_runtime=not_used_in_phase_1"
 
   local -a peer_args=()
@@ -250,6 +307,7 @@ run_miner() {
 
   [[ -f /runtime/miner-wallet.json ]] || die "Miner wallet file is missing at /runtime/miner-wallet.json."
   ensure_sqlite_file /runtime/miner.sqlite3 "Miner SQLite"
+  configure_discovery_env_for_role miner
 
   local miner_address
   miner_address="$(wallet_address /runtime/miner-wallet.json)"

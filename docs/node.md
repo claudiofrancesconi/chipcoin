@@ -46,6 +46,9 @@ Relevant `.env` keys:
 - `NODE_P2P_BIND_PORT`
 - `NODE_HTTP_BIND_PORT`
 - `CHIPCOIN_HTTP_ALLOWED_ORIGINS`
+- `NODE_DIRECT_PEERS`
+- `NODE_DIRECT_PEER`
+- `NODE_BOOTSTRAP_URL`
 - `DIRECT_PEERS`
 - `DIRECT_PEER`
 - `BOOTSTRAP_URL`
@@ -626,8 +629,10 @@ Basic validation:
 
 ## Notes
 
-- `DIRECT_PEERS` is the preferred way to define one or more explicit startup peers.
-- `DIRECT_PEER` remains supported for compatibility with older configs.
-- Leave `DIRECT_PEERS`, `DIRECT_PEER`, and `BOOTSTRAP_URL` empty for an isolated node.
+- `NODE_DIRECT_PEERS` is the preferred way to define one or more explicit startup peers for the node.
+- `NODE_DIRECT_PEER` remains supported for compatibility with older configs.
+- `NODE_BOOTSTRAP_URL` is the preferred bootstrap helper setting for the node.
+- If `NODE_*` discovery vars are unset, the node falls back to `DIRECT_PEERS`, `DIRECT_PEER`, and `BOOTSTRAP_URL`.
+- Leave both `NODE_*` and shared discovery vars empty for an isolated node.
 - Public browser wallet access may require `CHIPCOIN_HTTP_ALLOWED_ORIGINS` to include the wallet origin.
 - The recommended runtime directory is outside the repo, for example `/home/komarek/Chipcoin-runtime`.
