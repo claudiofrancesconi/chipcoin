@@ -224,7 +224,7 @@ class SQLiteHeaderRepository(HeaderRepository):
             SELECT block_hash
             FROM headers
             WHERE cumulative_work IS NOT NULL
-            ORDER BY CAST(cumulative_work AS INTEGER) DESC, COALESCE(height, -1) DESC, block_hash DESC
+            ORDER BY LENGTH(cumulative_work) DESC, cumulative_work DESC, COALESCE(height, -1) DESC, block_hash DESC
             LIMIT 1
             """
         ).fetchone()
