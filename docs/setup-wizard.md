@@ -12,6 +12,13 @@ python3 scripts/setup/wizard.py
 
 The wizard writes a local `.env` in the repository root. It does not change the protocol, and it does not modify public defaults in the repository.
 
+By default, the generated runtime paths point to `/var/lib/chipcoin`. On a fresh Linux host, prepare and own that directory before running the wizard:
+
+```bash
+sudo mkdir -p /var/lib/chipcoin/data /var/lib/chipcoin/wallets /var/lib/chipcoin/logs
+sudo chown -R "$USER:$USER" /var/lib/chipcoin
+```
+
 ## When To Use It
 
 Use the wizard when:

@@ -37,14 +37,15 @@ Example creation:
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .[dev]
-mkdir -p /path/to/Chipcoin-runtime/wallets
-chipcoin wallet-generate --wallet-file /path/to/Chipcoin-runtime/wallets/chipcoin-wallet.json
+sudo mkdir -p /var/lib/chipcoin/wallets
+sudo chown -R "$USER:$USER" /var/lib/chipcoin
+chipcoin wallet-generate --wallet-file /var/lib/chipcoin/wallets/chipcoin-wallet.json
 ```
 
 Show the payout address:
 
 ```bash
-chipcoin wallet-address --wallet-file /path/to/Chipcoin-runtime/wallets/chipcoin-wallet.json
+chipcoin wallet-address --wallet-file /var/lib/chipcoin/wallets/chipcoin-wallet.json
 ```
 
 ## Start
@@ -75,4 +76,4 @@ docker compose logs -f miner
 - If miner-specific discovery vars are unset, it falls back to `DIRECT_PEERS`, `DIRECT_PEER`, and `BOOTSTRAP_URL`.
 - In the default Docker Compose stack, the miner falls back to `node:18444` so same-host node+miner startup works without editing `.env`.
 - For a miner-only host, set `MINER_DIRECT_PEERS=chipcoinprotocol.com:18444` or `MINER_BOOTSTRAP_URL=https://bootstrap.chipcoinprotocol.com`.
-- The recommended runtime directory is outside the repo, for example `/home/komarek/Chipcoin-runtime`.
+- The recommended runtime directory is outside the repo, for example `/var/lib/chipcoin` on a stable Linux host.

@@ -23,7 +23,7 @@ from chipcoin.wallet.signer import generate_wallet_key, wallet_key_from_private_
 
 ENV_PATH = REPO_ROOT / ".env"
 ENV_EXAMPLE_PATH = REPO_ROOT / "config" / "env" / ".env.example"
-RUNTIME_ROOT = Path.home() / "Chipcoin-runtime"
+RUNTIME_ROOT = Path("/var/lib/chipcoin")
 NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.sqlite3")
 MINER_DATA_PATH = str(RUNTIME_ROOT / "data" / "miner-devnet.sqlite3")
 WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "chipcoin-wallet.json")
@@ -244,7 +244,15 @@ def _print_public_reachability_note() -> None:
 
 
 def _prepare_wallet_path(wallet_path: Path) -> None:
-    wallet_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        wallet_path.parent.mkdir(parents=True, exist_ok=True)
+    except PermissionError as exc:
+        _die(
+            f"Cannot create wallet directory {wallet_path.parent}. "
+            "Prepare the runtime path first, for example with "
+            f"'sudo mkdir -p {wallet_path.parent} && sudo chown -R $USER:$USER {RUNTIME_ROOT}'. "
+            f"Original error: {exc}"
+        )
     if wallet_path.exists():
         overwrite = input(f"Wallet file already exists at {wallet_path}. Overwrite it? [y/N]: ").strip().lower()
         if overwrite not in {"y", "yes"}:
@@ -278,10 +286,26 @@ def _handle_wallet(wallet_mode: str, wallet_path: Path) -> tuple[str, str]:
 
 
 def _prepare_sqlite_file(path: Path, label: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except PermissionError as exc:
+        _die(
+            f"Cannot create {label.lower()} directory {path.parent}. "
+            "Prepare the runtime path first, for example with "
+            f"'sudo mkdir -p {path.parent} && sudo chown -R $USER:$USER {RUNTIME_ROOT}'. "
+            f"Original error: {exc}"
+        )
     if path.exists() and path.is_dir():
         _die(f"{label} path points to a directory, but a writable SQLite file is required: {path}")
-    path.touch(exist_ok=True)
+    try:
+        path.touch(exist_ok=True)
+    except PermissionError as exc:
+        _die(
+            f"{label} file is not writable: {path}. "
+            "If you use the default runtime root, create it and hand ownership to your user with "
+            f"'sudo mkdir -p {RUNTIME_ROOT}/data {RUNTIME_ROOT}/wallets {RUNTIME_ROOT}/logs "
+            f"&& sudo chown -R $USER:$USER {RUNTIME_ROOT}'. Original error: {exc}"
+        )
     if not path.is_file():
         _die(f"{label} path is not a regular file: {path}")
     if not os.access(path, os.W_OK):
@@ -333,7 +357,7 @@ def _print_success(
     else:
         print("Wallet: not required for node-only Phase 1 runtime")
         print("Note: node wallet support is reserved for future real node reward participation flows.")
-    print(f"Runtime directory: {DEFAULTS['CHIPCOIN_RUNTIME_DIR']}")
+    print(f"Runtime directory: {env_values['CHIPCOIN_RUNTIME_DIR']}")
     print(f"Setup mode: {setup_mode}")
     print(f"Default node endpoint: {env_values['DEFAULT_NODE_ENDPOINT']}")
     if env_values["DEFAULT_BOOTSTRAP_PEER"]:

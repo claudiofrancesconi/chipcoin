@@ -335,9 +335,10 @@ The HTTP/API port (`8081`) and explorer port (`4173`) are optional operator inte
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .[dev]
-mkdir -p /path/to/Chipcoin-runtime/wallets
-chipcoin wallet-generate --wallet-file /path/to/Chipcoin-runtime/wallets/chipcoin-wallet.json
-chipcoin wallet-address --wallet-file /path/to/Chipcoin-runtime/wallets/chipcoin-wallet.json
+sudo mkdir -p /var/lib/chipcoin/wallets
+sudo chown -R "$USER:$USER" /var/lib/chipcoin
+chipcoin wallet-generate --wallet-file /var/lib/chipcoin/wallets/chipcoin-wallet.json
+chipcoin wallet-address --wallet-file /var/lib/chipcoin/wallets/chipcoin-wallet.json
 ```
 
 ### Start The Stack
@@ -425,8 +426,8 @@ Peer diagnostics now expose:
 Useful examples:
 
 ```bash
-chipcoin --network devnet --data /path/to/Chipcoin-runtime/data/node-devnet.sqlite3 tip
-chipcoin --network devnet --data /path/to/Chipcoin-runtime/data/miner-devnet.sqlite3 tip
+chipcoin --network devnet --data /var/lib/chipcoin/data/node-devnet.sqlite3 tip
+chipcoin --network devnet --data /var/lib/chipcoin/data/miner-devnet.sqlite3 tip
 ```
 
 For practical operator diagnostics and recovery steps, use:
@@ -492,19 +493,21 @@ The repository should stay clean and publishable. Real runtime state should live
 
 Recommended layout:
 
-- repository: `~/src/chipcoin`
-- runtime directory: `/home/komarek/Chipcoin-runtime`
+- repository: `/opt/chipcoin` on stable hosts, or `~/src/chipcoin` for local dev
+- runtime directory: `/var/lib/chipcoin`
+- optional logs: `/var/log/chipcoin`
 
 Setup:
 
 ```bash
 cp .env.example .env
-mkdir -p /home/komarek/Chipcoin-runtime/data
-mkdir -p /home/komarek/Chipcoin-runtime/wallets
-mkdir -p /home/komarek/Chipcoin-runtime/logs
+sudo mkdir -p /var/lib/chipcoin/data
+sudo mkdir -p /var/lib/chipcoin/wallets
+sudo mkdir -p /var/lib/chipcoin/logs
+sudo chown -R "$USER:$USER" /var/lib/chipcoin
 ```
 
-Then edit `.env` and replace every `/path/to/Chipcoin-runtime/...` placeholder with your real runtime directory before running `docker compose up`.
+The default `.env.example` already points at `/var/lib/chipcoin`. If you keep that layout, you do not need to rewrite the runtime paths before running `docker compose up`.
 
 Create a local-only override file when you need machine-specific customization:
 
@@ -559,8 +562,8 @@ Detailed instructions:
 The shortest supported path from clone to a working local stack is:
 
 1. Clone the repository and create `.env` from `.env.example`.
-2. Edit `.env` and replace all `/path/to/Chipcoin-runtime/...` placeholders with real local paths.
-3. Create the runtime directories referenced by `.env`.
+2. Create and own the runtime directories referenced by `.env`.
+3. Adjust `.env` only if you intentionally want a different runtime root.
 4. Generate a miner wallet file at `MINER_WALLET_FILE`.
 5. Start the local stack with `docker compose up --build node miner`.
 6. Verify the node API with `curl http://127.0.0.1:8081/v1/status`.

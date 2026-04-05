@@ -635,4 +635,4 @@ Basic validation:
 - If `NODE_*` discovery vars are unset, the node falls back to `DIRECT_PEERS`, `DIRECT_PEER`, and `BOOTSTRAP_URL`.
 - Leave both `NODE_*` and shared discovery vars empty for an isolated node.
 - Public browser wallet access may require `CHIPCOIN_HTTP_ALLOWED_ORIGINS` to include the wallet origin.
-- The recommended runtime directory is outside the repo, for example `/home/komarek/Chipcoin-runtime`.
+- The recommended runtime directory is outside the repo, for example `/var/lib/chipcoin` on a stable Linux host.

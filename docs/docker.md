@@ -21,11 +21,11 @@ The recommended runtime layout keeps mutable state outside the repository.
 
 Example:
 
-- `/home/<user>/Chipcoin-runtime/data/node-devnet.sqlite3`
-- `/home/<user>/Chipcoin-runtime/data/miner-devnet.sqlite3`
-- `/home/<user>/Chipcoin-runtime/wallets/chipcoin-wallet.json`
-- `/home/<user>/Chipcoin-runtime/logs/node/`
-- `/home/<user>/Chipcoin-runtime/logs/miner/`
+- `/var/lib/chipcoin/data/node-devnet.sqlite3`
+- `/var/lib/chipcoin/data/miner-devnet.sqlite3`
+- `/var/lib/chipcoin/wallets/chipcoin-wallet.json`
+- `/var/lib/chipcoin/logs/node/`
+- `/var/lib/chipcoin/logs/miner/`
 
 Relevant `.env` keys:
 

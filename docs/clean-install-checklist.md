@@ -21,15 +21,17 @@ Checks:
 
 ```bash
 cp .env.example .env
-mkdir -p /path/to/Chipcoin-runtime/data
-mkdir -p /path/to/Chipcoin-runtime/wallets
-chipcoin wallet-generate --wallet-file /path/to/Chipcoin-runtime/wallets/chipcoin-wallet.json
+sudo mkdir -p /var/lib/chipcoin/data
+sudo mkdir -p /var/lib/chipcoin/wallets
+sudo mkdir -p /var/lib/chipcoin/logs
+sudo chown -R "$USER:$USER" /var/lib/chipcoin
+chipcoin wallet-generate --wallet-file /var/lib/chipcoin/wallets/chipcoin-wallet.json
 ```
 
 Checks:
 
 - `.env` exists locally only
-- placeholder paths from `.env.example` have been replaced with real local paths before `docker compose up`
+- runtime paths in `.env` point to writable local paths before `docker compose up`
 - wallet file is outside version control
 
 ## Node And Miner
