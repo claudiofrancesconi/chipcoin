@@ -15,6 +15,22 @@ from chipcoin.node.service import NodeService
 from tests.helpers import wallet_key
 
 
+class FakeTime:
+    def __init__(self, *, now: float = 1_700_000_000.0, monotonic_value: float = 0.0) -> None:
+        self._now = now
+        self._monotonic = monotonic_value
+
+    def time(self) -> float:
+        return self._now
+
+    def monotonic(self) -> float:
+        return self._monotonic
+
+    def sleep(self, seconds: float) -> None:
+        self._now += seconds
+        self._monotonic += seconds
+
+
 def _make_service(database_path: Path) -> NodeService:
     timestamps = iter(range(1_700_000_000, 1_700_100_000))
     return NodeService.open_sqlite(database_path, time_provider=lambda: next(timestamps))
@@ -113,6 +129,7 @@ def test_miner_worker_fetches_template_immediately_and_mines_remote_block() -> N
 def test_miner_worker_marks_template_stale_after_tip_change() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "node.sqlite3")
+        fake_time = FakeTime()
         worker = MinerWorker(
             MinerWorkerConfig(
                 network="mainnet",
@@ -121,13 +138,46 @@ def test_miner_worker_marks_template_stale_after_tip_change() -> None:
                 miner_id="worker-a",
                 nonce_batch_size=1000,
                 run_seconds=0.1,
-            )
+            ),
+            time_module=fake_time,
         )
         worker.clients = [FakeMiningClient(service)]
         template = worker._acquire_template()
         service.apply_block(_mine_block(service.build_candidate_block(wallet_key(1).address).block))
+        fake_time._monotonic = template.next_status_check_at
 
         assert worker._template_is_stale(template) is True
+        decision = worker._template_refresh_decision(template)
+        assert decision is not None
+        assert decision.reason == "tip_changed"
+        assert decision.details["current_best_height"] == 0
+
+
+def test_miner_worker_marks_template_expired_after_ttl() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "node.sqlite3")
+        fake_time = FakeTime()
+        worker = MinerWorker(
+            MinerWorkerConfig(
+                network="mainnet",
+                payout_address=wallet_key(0).address,
+                node_urls=("memory://node",),
+                miner_id="worker-a",
+                nonce_batch_size=1000,
+                run_seconds=0.1,
+                template_refresh_skew_seconds=1,
+            ),
+            time_module=fake_time,
+        )
+        worker.clients = [FakeMiningClient(service)]
+        template = worker._acquire_template()
+        fake_time._now = int(template.payload["template_expiry"])
+
+        decision = worker._template_refresh_decision(template)
+
+        assert decision is not None
+        assert decision.reason == "expired"
+        assert decision.details["template_expiry"] == int(template.payload["template_expiry"])
 
 
 def test_miner_worker_fails_over_to_secondary_node() -> None:

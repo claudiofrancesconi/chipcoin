@@ -210,11 +210,21 @@ class HttpApiApp:
         if not isinstance(miner_id, str) or not miner_id.strip():
             raise ApiError(400, "invalid_request", "miner_id is required")
         try:
-            return self.service.get_block_template(
+            template = self.service.get_block_template(
                 payout_address=payout_address.strip(),
                 miner_id=miner_id.strip(),
                 template_mode=template_mode,
             )
+            self.logger.info(
+                "mining template issued miner_id=%s template_id=%s height=%s previous_block_hash=%s template_expiry=%s template_ttl_seconds=%s",
+                miner_id.strip(),
+                template.get("template_id"),
+                template.get("height"),
+                template.get("previous_block_hash"),
+                template.get("template_expiry"),
+                self.service.mining_status().get("template_ttl_seconds"),
+            )
+            return template
         except ValueError as exc:
             raise ApiError(400, "invalid_request", str(exc)) from exc
 

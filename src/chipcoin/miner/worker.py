@@ -27,6 +27,14 @@ class ActiveTemplate:
     nonce_cursor: int = 0
 
 
+@dataclass(frozen=True)
+class TemplateRefreshDecision:
+    """Describe why one active template must be replaced."""
+
+    reason: str
+    details: dict[str, object]
+
+
 class MinerWorker:
     """A lightweight worker that mines only from node-provided block templates."""
 
@@ -67,12 +75,9 @@ class MinerWorker:
                 continue
             solved_block, active_template = self._mine_batch(active_template)
             if solved_block is None:
-                if self._template_is_stale(active_template):
-                    self.logger.info(
-                        "template stale template_id=%s node=%s",
-                        active_template.payload["template_id"],
-                        active_template.node_url,
-                    )
+                refresh_decision = self._template_refresh_decision(active_template)
+                if refresh_decision is not None:
+                    self._log_template_refresh(active_template, refresh_decision)
                     active_template = None
                 continue
             result = self._submit_block(active_template, solved_block)
@@ -186,21 +191,82 @@ class MinerWorker:
             miner_id=self.config.miner_id,
         )
 
-    def _template_is_stale(self, active_template: ActiveTemplate) -> bool:
-        """Return whether the current template should be replaced before further hashing."""
+    def _template_refresh_decision(self, active_template: ActiveTemplate) -> TemplateRefreshDecision | None:
+        """Return why the current template should be replaced, if needed."""
 
         now = self.time.time()
-        if now >= int(active_template.payload["template_expiry"]) - self.config.template_refresh_skew_seconds:
-            return True
+        expiry_at = int(active_template.payload["template_expiry"])
+        if now >= expiry_at - self.config.template_refresh_skew_seconds:
+            return TemplateRefreshDecision(
+                reason="expired",
+                details={"template_expiry": expiry_at, "now": int(now)},
+            )
         if self.time.monotonic() < active_template.next_status_check_at:
-            return False
+            return None
         client = self.clients[self._active_client_index]
         try:
             status = client.status()
         except MiningApiError as exc:
-            self.logger.warning("status refresh failed node=%s error=%s", client.base_url, exc)
-            return True
-        return str(status["best_tip_hash"]) != str(active_template.payload["previous_block_hash"])
+            return TemplateRefreshDecision(
+                reason="status_refresh_failed",
+                details={"error": str(exc)},
+            )
+        current_tip_hash = str(status["best_tip_hash"])
+        template_previous_hash = str(active_template.payload["previous_block_hash"])
+        if current_tip_hash != template_previous_hash:
+            return TemplateRefreshDecision(
+                reason="tip_changed",
+                details={
+                    "template_previous_block_hash": template_previous_hash,
+                    "current_best_tip_hash": current_tip_hash,
+                    "current_best_height": int(status["best_height"]),
+                },
+            )
+        return None
+
+    def _template_is_stale(self, active_template: ActiveTemplate) -> bool:
+        """Backwards-compatible boolean helper for tests and callers."""
+
+        return self._template_refresh_decision(active_template) is not None
+
+    def _log_template_refresh(self, active_template: ActiveTemplate, decision: TemplateRefreshDecision) -> None:
+        """Emit one precise refresh log line for the active template."""
+
+        template_id = str(active_template.payload["template_id"])
+        node_url = active_template.node_url
+        if decision.reason == "expired":
+            self.logger.info(
+                "template expired template_id=%s node=%s template_expiry=%s now=%s",
+                template_id,
+                node_url,
+                decision.details["template_expiry"],
+                decision.details["now"],
+            )
+            return
+        if decision.reason == "tip_changed":
+            self.logger.info(
+                "template stale template_id=%s node=%s reason=tip_changed template_previous_block_hash=%s current_best_tip_hash=%s current_best_height=%s",
+                template_id,
+                node_url,
+                decision.details["template_previous_block_hash"],
+                decision.details["current_best_tip_hash"],
+                decision.details["current_best_height"],
+            )
+            return
+        if decision.reason == "status_refresh_failed":
+            self.logger.warning(
+                "template refresh failed template_id=%s node=%s reason=status_refresh_failed error=%s",
+                template_id,
+                node_url,
+                decision.details["error"],
+            )
+            return
+        self.logger.info(
+            "template replaced template_id=%s node=%s reason=%s",
+            template_id,
+            node_url,
+            decision.reason,
+        )
 
     def _build_coinbase(self, template_payload: dict[str, Any], extra_nonce: int) -> Transaction:
         """Construct one worker-side coinbase for the active template."""
