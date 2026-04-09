@@ -41,6 +41,10 @@ def main(argv: list[str] | None = None) -> int:
         data_path = resolve_data_path(args.data, args.network)
         service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address", "mine", "submit-raw-tx"} else NodeService.open_sqlite(data_path, network=args.network)
 
+        if service is not None and getattr(args, "snapshot_file", None) and args.command in {"run", "start"}:
+            if getattr(args, "snapshot_reset", False) or service.chain_tip() is None:
+                service.import_snapshot_file(Path(args.snapshot_file), reset_existing=getattr(args, "snapshot_reset", False))
+
         if args.command == "start":
             assert service is not None
             service.start()
@@ -354,6 +358,16 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
 
+        if args.command == "snapshot-export":
+            assert service is not None
+            _print_json(service.export_snapshot_file(Path(args.snapshot_file)))
+            return 0
+
+        if args.command == "snapshot-import":
+            assert service is not None
+            _print_json(service.import_snapshot_file(Path(args.snapshot_file), reset_existing=args.snapshot_reset))
+            return 0
+
         if args.command == "wallet-generate":
             wallet_key = generate_wallet_key()
             _save_wallet_key(Path(args.wallet_file), wallet_key)
@@ -488,6 +502,8 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--listen-port", type=int, default=None)
     run_parser.add_argument("--http-host", default=None)
     run_parser.add_argument("--http-port", type=int, default=None)
+    run_parser.add_argument("--snapshot-file", default=None, help="Optional local snapshot file for fast bootstrap.")
+    run_parser.add_argument("--snapshot-reset", action="store_true", help="Replace existing local chain state when importing a snapshot.")
     run_parser.add_argument("--peer", action="append", default=[], help="Outbound peer in host:port form.")
     run_parser.add_argument("--peer-source", choices=("manual", "seed"), default="manual")
     run_parser.add_argument("--run-seconds", type=float, default=None, help="Stop automatically after N seconds.")
@@ -606,6 +622,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sync_parser = subparsers.add_parser("sync")
     sync_parser.add_argument("--peer-data", required=True, help="Path to a peer SQLite data file.")
+
+    snapshot_export_parser = subparsers.add_parser("snapshot-export")
+    snapshot_export_parser.add_argument("--snapshot-file", required=True)
+
+    snapshot_import_parser = subparsers.add_parser("snapshot-import")
+    snapshot_import_parser.add_argument("--snapshot-file", required=True)
+    snapshot_import_parser.add_argument("--snapshot-reset", action="store_true")
 
     wallet_generate = subparsers.add_parser("wallet-generate")
     wallet_generate.add_argument("--wallet-file", required=True)

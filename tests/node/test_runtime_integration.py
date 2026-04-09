@@ -843,6 +843,47 @@ def test_template_miner_fails_over_to_secondary_node_runtime() -> None:
     asyncio.run(scenario())
 
 
+def test_runtime_bootstraps_from_snapshot_and_syncs_only_post_anchor_delta() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            source_service = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+            for _ in range(4):
+                source_service.apply_block(_mine_block(source_service.build_candidate_block("CHCsource").block))
+            snapshot_path = Path(tempdir) / "chain.snapshot.json"
+            source_service.export_snapshot_file(snapshot_path)
+            for _ in range(2):
+                source_service.apply_block(_mine_block(source_service.build_candidate_block("CHCsource").block))
+
+            target_service = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+            target_service.import_snapshot_file(snapshot_path)
+
+            source_runtime = NodeRuntime(service=source_service, listen_host="127.0.0.1", listen_port=0, ping_interval=0.2)
+            await source_runtime.start()
+            target_runtime = NodeRuntime(
+                service=target_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                outbound_peers=[OutboundPeer("127.0.0.1", source_runtime.bound_port)],
+                connect_interval=0.1,
+                ping_interval=0.2,
+            )
+            await target_runtime.start()
+            try:
+                await _wait_until(
+                    lambda: target_service.chain_tip() is not None
+                    and source_service.chain_tip() is not None
+                    and target_service.chain_tip().block_hash == source_service.chain_tip().block_hash,
+                    timeout=10.0,
+                )
+                assert target_service.snapshot_anchor() is not None
+                assert target_service.snapshot_anchor().height == 3
+            finally:
+                await target_runtime.stop()
+                await source_runtime.stop()
+
+    asyncio.run(scenario())
+
+
 def test_post_handshake_idle_read_timeout_does_not_drop_healthy_sessions() -> None:
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:

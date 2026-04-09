@@ -29,8 +29,9 @@ What works today:
 - peer misbehavior scoring with temporary bans and decay
 - persistent peerbook with bounded addr/getaddr discovery
 - headers-first initial sync with bounded multi-peer block download
+- snapshot-based fast bootstrap for nodes using a trusted chainstate snapshot plus post-anchor delta sync
 - HTTP API for status, blocks, transactions, peers, and address data
-- external miner process using a wallet file
+- external template-based miner worker using a wallet file
 - browser wallet for Chrome and Firefox
 - Docker-based node and miner startup
 
@@ -101,9 +102,9 @@ Standard runtime roles in the current public stack:
   - exposes the HTTP API
   - participates in P2P networking
 - `miner`
-  - builds candidate blocks
+  - requests block templates from a node over HTTP
   - uses a miner wallet file for payout address selection
-  - depends on network-visible chain state from peers
+  - does not maintain a full chain database
 - `browser-wallet`
   - stores keys locally in extension storage
   - signs transactions locally
@@ -114,7 +115,6 @@ Local state vs network state:
 
 - local state
   - node SQLite database
-  - miner SQLite database
   - miner wallet JSON file
   - browser wallet extension storage
   - explorer local/browser-saved API base override
@@ -163,6 +163,30 @@ If you want a fully local first run, set:
 - `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT=http://127.0.0.1:8081`
 
 This starts an isolated local node with a miner that immediately pulls templates from the local node HTTP API.
+
+### Full Sync vs Snapshot Bootstrap
+
+Chipcoin now supports two node bootstrap paths:
+
+- full sync from genesis
+  - validates blocks from height 0
+  - slowest startup
+  - trustless path
+- fast sync from snapshot
+  - imports a trusted chainstate snapshot anchored to a specific block hash/height
+  - validates only the delta after that anchor
+  - much faster startup
+  - not equivalent to genesis validation
+
+Snapshot workflow:
+
+```bash
+chipcoin --data /runtime/node.sqlite3 snapshot-export --snapshot-file /runtime/devnet.snapshot.json
+chipcoin --data /runtime/node.sqlite3 snapshot-import --snapshot-file /runtime/devnet.snapshot.json
+chipcoin --data /runtime/node.sqlite3 run --snapshot-file /runtime/devnet.snapshot.json --peer chipcoinprotocol.com:18444
+```
+
+Use full sync when you want maximum assurance. Use snapshot bootstrap when you trust the snapshot publisher operationally and want a much faster first sync.
 
 If you want your node to improve peer discovery and network resilience, keep `NODE_P2P_BIND_PORT=18444` and make that TCP port publicly reachable from the internet when your router and firewall policy allow it.
 

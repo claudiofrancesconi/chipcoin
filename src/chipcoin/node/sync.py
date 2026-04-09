@@ -224,6 +224,13 @@ class SyncManager:
         """Return missing blocks needed to activate a candidate chain tip."""
 
         path_hashes = self.node.headers.path_to_root(tip_hash)
+        snapshot_anchor = None
+        if hasattr(self.node, "snapshot_anchor"):
+            snapshot_anchor = self.node.snapshot_anchor()
+        if snapshot_anchor is not None:
+            if snapshot_anchor.height >= len(path_hashes) or path_hashes[snapshot_anchor.height] != snapshot_anchor.block_hash:
+                raise ValueError("snapshot anchor mismatch")
+            path_hashes = path_hashes[snapshot_anchor.height + 1 :]
         return tuple(block_hash for block_hash in path_hashes if self.node.get_block_by_hash(block_hash) is None)
 
     def reserve_block_downloads(
@@ -438,6 +445,9 @@ class SyncManager:
             missing_block_hashes=(),
         )
         locator_hashes = self.node.build_block_locator()
+        snapshot_anchor = None
+        if hasattr(self.node, "snapshot_anchor"):
+            snapshot_anchor = self.node.snapshot_anchor()
         while True:
             request = GetHeadersMessage(
                 protocol_version=1,
@@ -445,6 +455,12 @@ class SyncManager:
                 stop_hash="00" * 32,
             )
             response = peer.handle_getheaders(request, limit=self.max_headers)
+            if (
+                snapshot_anchor is not None
+                and response.headers
+                and response.headers[0].previous_block_hash not in locator_hashes
+            ):
+                raise ValueError("snapshot anchor mismatch")
             ingest = self.ingest_headers(response.headers)
             total_headers_received += ingest.headers_received
             last_ingest = ingest

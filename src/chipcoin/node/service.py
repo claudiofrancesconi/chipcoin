@@ -34,6 +34,14 @@ from .mempool import AcceptedTransaction, MempoolManager, MempoolPolicy
 from .messages import GetBlocksMessage, GetHeadersMessage, HeadersMessage, InvMessage, InventoryVector
 from .mining import BlockTemplate, MiningCoordinator, build_coinbase_transaction, transaction_weight_units
 from .peers import PeerInfo, PeerManager
+from .snapshots import (
+    LoadedSnapshot,
+    SnapshotAnchor,
+    SnapshotHeaderRecord,
+    build_snapshot_payload,
+    load_snapshot_file,
+    write_snapshot_file,
+)
 from ..wallet.models import SpendCandidate
 
 
@@ -132,6 +140,7 @@ class NodeService:
         peer_repository=None,
         peerbook: PeerManager | None = None,
         time_provider=unix_time,
+        connection=None,
     ) -> None:
         self.network = network
         self.params = params
@@ -142,6 +151,7 @@ class NodeService:
         self.peer_repository = peer_repository
         self.peerbook = peerbook or PeerManager()
         self.time_provider = time_provider
+        self.connection = connection
         self.mempool = MempoolManager(
             repository=mempool_repository,
             chainstate=chainstate,
@@ -180,12 +190,100 @@ class NodeService:
             mempool_repository=SQLiteMempoolRepository(connection),
             peer_repository=SQLitePeerRepository(connection),
             time_provider=time_provider,
+            connection=connection,
         )
 
     def start(self) -> None:
         """Local-only startup placeholder."""
 
         return None
+
+    def export_snapshot_payload(self) -> dict[str, object]:
+        """Return a deterministic snapshot payload for fast bootstrap."""
+
+        tip = self.chain_tip()
+        if tip is None:
+            raise ValueError("cannot export a snapshot from an empty chain")
+        headers: list[SnapshotHeaderRecord] = []
+        for height in range(tip.height + 1):
+            block_hash = self.headers.get_hash_at_height(height)
+            if block_hash is None:
+                raise ValueError(f"missing main-chain header at height {height}")
+            record = self.headers.get_record(block_hash)
+            if record is None or record.cumulative_work is None:
+                raise ValueError(f"missing main-chain header metadata at height {height}")
+            headers.append(
+                SnapshotHeaderRecord(
+                    header=record.header,
+                    height=height,
+                    cumulative_work=record.cumulative_work,
+                )
+            )
+        return build_snapshot_payload(
+            network=self.network,
+            params=self.params,
+            created_at=self.time_provider(),
+            headers=tuple(headers),
+            utxos=tuple(self.chainstate.list_utxos()),
+            node_registry_records=tuple(self.node_registry.list_records()),
+        )
+
+    def export_snapshot_file(self, path: Path) -> dict[str, object]:
+        """Write a fast-sync snapshot to disk and return its metadata."""
+
+        payload = self.export_snapshot_payload()
+        write_snapshot_file(path, payload)
+        return dict(payload["metadata"])
+
+    def import_snapshot_file(self, path: Path, *, reset_existing: bool = False) -> dict[str, object]:
+        """Load a snapshot from disk and replace local chainstate with its anchor state."""
+
+        loaded = load_snapshot_file(path, network=self.network, params=self.params)
+        self.import_snapshot(loaded, reset_existing=reset_existing)
+        return dict(loaded.metadata)
+
+    def import_snapshot(self, snapshot: LoadedSnapshot, *, reset_existing: bool = False) -> None:
+        """Replace local persistent chainstate with one verified snapshot."""
+
+        if self.connection is None:
+            raise ValueError("snapshot import requires a writable SQLite-backed node service")
+        existing_tip = self.chain_tip()
+        if existing_tip is not None and not reset_existing:
+            raise ValueError("snapshot import requires an empty chain or reset_existing=True")
+        with self.connection:
+            self.connection.execute("DELETE FROM mempool_transactions")
+            self.connection.execute("DELETE FROM blocks")
+            self.connection.execute("DELETE FROM headers")
+            self.connection.execute("DELETE FROM utxos")
+            self.connection.execute("DELETE FROM node_registry")
+            self.connection.execute(
+                "DELETE FROM chain_meta WHERE key LIKE 'snapshot_%' OR key = 'chain_tip_hash'"
+            )
+        for record in snapshot.headers:
+            self.headers.put(
+                record.header,
+                height=record.height,
+                cumulative_work=record.cumulative_work,
+                is_main_chain=True,
+            )
+        self.headers.set_tip(snapshot.anchor.block_hash, snapshot.anchor.height)
+        self.chainstate.replace_all(list(snapshot.utxos))
+        self.node_registry.replace_all(list(snapshot.node_registry_records))
+        self._set_chain_meta("snapshot_height", str(snapshot.anchor.height))
+        self._set_chain_meta("snapshot_block_hash", snapshot.anchor.block_hash)
+        self._set_chain_meta("snapshot_checksum_sha256", str(snapshot.metadata["checksum_sha256"]))
+        self._set_chain_meta("snapshot_format_version", str(snapshot.metadata["format_version"]))
+        self.invalidate_mining_templates()
+        self.set_runtime_sync_status(None)
+
+    def snapshot_anchor(self) -> SnapshotAnchor | None:
+        """Return the trusted snapshot anchor when this node was bootstrapped from one."""
+
+        height = self._get_chain_meta("snapshot_height")
+        block_hash = self._get_chain_meta("snapshot_block_hash")
+        if height is None or block_hash is None:
+            return None
+        return SnapshotAnchor(height=int(height), block_hash=block_hash)
 
     def receive_transaction(self, transaction: Transaction) -> AcceptedTransaction:
         """Validate and stage a transaction into the local mempool."""
@@ -506,6 +604,10 @@ class NodeService:
 
         previous_tip = self.headers.get_tip()
         path_hashes = self.headers.path_to_root(tip_hash)
+        snapshot_anchor = self.snapshot_anchor()
+        if snapshot_anchor is not None:
+            if snapshot_anchor.height >= len(path_hashes) or path_hashes[snapshot_anchor.height] != snapshot_anchor.block_hash:
+                raise ValueError("candidate chain does not match the trusted snapshot anchor")
         old_tip_hash = None if previous_tip is None else previous_tip.block_hash
         old_path = [] if previous_tip is None else self.headers.path_to_root(previous_tip.block_hash)
         common_prefix = 0
@@ -516,14 +618,33 @@ class NodeService:
         common_ancestor = path_hashes[common_prefix - 1] if common_prefix > 0 else None
         disconnected_hashes = old_path[common_prefix:]
         reorged = old_tip_hash is not None and old_tip_hash != tip_hash and old_tip_hash not in path_hashes
-        utxo_view = InMemoryUtxoView()
-        node_registry_view = InMemoryNodeRegistryView()
-        previous_hash = "00" * 32
-        median_time_past = 0
+        if snapshot_anchor is None:
+            utxo_view = InMemoryUtxoView()
+            node_registry_view = InMemoryNodeRegistryView()
+            previous_hash = "00" * 32
+            median_time_past = 0
+            validated_headers = []
+            start_height = 0
+        else:
+            utxo_view = InMemoryUtxoView.from_entries(self.chainstate.list_utxos())
+            node_registry_view = self.node_registry.snapshot()
+            previous_hash = snapshot_anchor.block_hash
+            anchor_header = self.headers.get(snapshot_anchor.block_hash)
+            if anchor_header is None:
+                raise ValueError("missing trusted snapshot anchor header")
+            median_time_past = anchor_header.timestamp
+            validated_headers = []
+            for height in range(snapshot_anchor.height + 1):
+                anchor_hash = path_hashes[height]
+                header = self.headers.get(anchor_hash)
+                if header is None:
+                    raise ValueError(f"missing trusted snapshot header at height {height}")
+                validated_headers.append(header)
+            start_height = snapshot_anchor.height + 1
         applied_blocks = 0
-        validated_headers = []
 
-        for height, block_hash in enumerate(path_hashes):
+        for height in range(start_height, len(path_hashes)):
+            block_hash = path_hashes[height]
             block = self.blocks.get(block_hash)
             if block is None:
                 raise ValueError(f"Cannot activate chain without stored block: {block_hash}")
@@ -1930,15 +2051,46 @@ class NodeService:
     def _replay_chain_state_before_height(self, height: int) -> tuple[InMemoryUtxoView, InMemoryNodeRegistryView]:
         """Rebuild active-chain views immediately before a given block height."""
 
-        utxo_view = InMemoryUtxoView()
-        node_registry_view = InMemoryNodeRegistryView()
-        for current_height in range(height):
+        snapshot_anchor = self.snapshot_anchor()
+        if snapshot_anchor is None or height <= snapshot_anchor.height:
+            utxo_view = InMemoryUtxoView()
+            node_registry_view = InMemoryNodeRegistryView()
+            start_height = 0
+        else:
+            utxo_view = InMemoryUtxoView.from_entries(self.chainstate.list_utxos())
+            node_registry_view = self.node_registry.snapshot()
+            start_height = snapshot_anchor.height + 1
+        for current_height in range(start_height, height):
             block = self.get_block_by_height(current_height)
             if block is None:
                 raise ValueError(f"Missing active-chain block at height {current_height}")
             utxo_view.apply_block(block, current_height)
             self._apply_node_registry_block(block, current_height, registry_view=node_registry_view)
         return utxo_view, node_registry_view
+
+    def _get_chain_meta(self, key: str) -> str | None:
+        """Return one stored chain metadata value when present."""
+
+        if self.connection is None:
+            return None
+        row = self.connection.execute("SELECT value FROM chain_meta WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            return None
+        return str(row["value"])
+
+    def _set_chain_meta(self, key: str, value: str) -> None:
+        """Persist one chain metadata value."""
+
+        if self.connection is None:
+            raise ValueError("chain metadata persistence requires a writable SQLite-backed node service")
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO chain_meta(key, value) VALUES(?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (key, value),
+            )
 
     def _retarget_window_for_candidate(self, candidate_height: int) -> dict[str, object]:
         """Return the window inputs that determine the candidate bits."""

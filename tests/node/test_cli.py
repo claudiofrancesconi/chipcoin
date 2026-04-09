@@ -197,6 +197,31 @@ def test_cli_tx_lookup_and_submit_raw_tx() -> None:
     asyncio.run(scenario())
 
 
+def test_cli_snapshot_export_and_import() -> None:
+    with TemporaryDirectory() as tempdir:
+        source_db = Path(tempdir) / "source.sqlite3"
+        target_db = Path(tempdir) / "target.sqlite3"
+        snapshot_path = Path(tempdir) / "chain.snapshot.json"
+        source = _make_service(source_db)
+        mined = _mine_block(source.build_candidate_block("CHCminer").block)
+        source.apply_block(mined)
+
+        export_code, export_payload = _run_cli(
+            ["--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)]
+        )
+        import_code, import_payload = _run_cli(
+            ["--data", str(target_db), "snapshot-import", "--snapshot-file", str(snapshot_path)]
+        )
+
+        imported_service = _make_service(target_db)
+        assert export_code == 0
+        assert import_code == 0
+        assert export_payload["snapshot_block_hash"] == mined.block_hash()
+        assert import_payload["snapshot_block_hash"] == mined.block_hash()
+        assert imported_service.chain_tip() is not None
+        assert imported_service.chain_tip().block_hash == mined.block_hash()
+
+
 def test_cli_add_peer_and_list_peers() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"

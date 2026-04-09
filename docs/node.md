@@ -13,6 +13,7 @@ The node is responsible for:
 - validation
 - chain and mempool persistence
 - peer discovery and synchronization
+- snapshot export and fast bootstrap import
 - HTTP API serving
 - mining template generation
 - solved block validation
@@ -79,10 +80,38 @@ Relevant `.env` keys:
 - `PEER_MISBEHAVIOR_DECAY_INTERVAL_SECONDS`
 - `PEER_MISBEHAVIOR_DECAY_STEP`
 
+Snapshot bootstrap is CLI-driven, not environment-driven.
+
+Supported node bootstrap modes:
+
+- full sync from genesis
+  - start with an empty SQLite database
+  - validate every block from height `0`
+- fast sync from snapshot
+  - import a trusted local snapshot file
+  - keep the embedded anchor header chain
+  - validate only blocks after the snapshot anchor height
+
+Snapshot bootstrap trust model:
+
+- faster than genesis replay
+- not trustless
+- trusts the snapshot publisher for the imported UTXO set and node-registry state
+- still validates all headers embedded in the snapshot
+- still validates all post-snapshot blocks normally
+- refuses chains that diverge before the trusted snapshot anchor
+
 ## Start
 
 ```bash
 docker compose up --build node
+```
+
+Fast bootstrap via CLI:
+
+```bash
+chipcoin --data /runtime/node.sqlite3 snapshot-import --snapshot-file /runtime/devnet.snapshot.json
+chipcoin --data /runtime/node.sqlite3 run --snapshot-file /runtime/devnet.snapshot.json --peer chipcoinprotocol.com:18444
 ```
 
 Detached:
@@ -176,6 +205,90 @@ Useful endpoints:
 - `GET /mining/status`
 - `POST /mining/get-block-template`
 - `POST /mining/submit-block`
+
+## Snapshot Export And Import
+
+Export the current active chainstate as a trusted fast-sync snapshot:
+
+```bash
+chipcoin --data /runtime/node.sqlite3 snapshot-export --snapshot-file /runtime/devnet.snapshot.json
+```
+
+Import a snapshot into an empty database:
+
+```bash
+chipcoin --data /runtime/node.sqlite3 snapshot-import --snapshot-file /runtime/devnet.snapshot.json
+```
+
+Replace existing chainstate with a snapshot:
+
+```bash
+chipcoin --data /runtime/node.sqlite3 snapshot-import --snapshot-file /runtime/devnet.snapshot.json --snapshot-reset
+```
+
+Snapshot contents:
+
+- active main-chain headers up to the snapshot anchor height
+- snapshot anchor height and block hash
+- current UTXO set
+- current on-chain node registry state
+- compatibility metadata and checksum
+
+Snapshot files currently use:
+
+- deterministic JSON
+- SHA-256 checksum verification
+- format versioning fields
+- optional signature fields reserved in metadata but not enforced yet
+
+Current limitations of snapshot nodes:
+
+- historical raw blocks before the snapshot anchor are not restored
+- diagnostics that depend on full historical raw block bodies may be partial for pre-anchor heights
+- reorgs that would invalidate the trusted anchor are rejected instead of replayed
+
+Why node-registry state is currently included:
+
+- the node registry is consensus-visible state
+- next-block reward selection depends on it
+- special node transactions validate against it
+- excluding it from snapshots would still require replaying historical registry mutations or a separate trusted registry snapshot
+
+So in the current design it remains part of the trusted chainstate snapshot.
+
+APIs and diagnostics that can be partial before the snapshot anchor because historical raw blocks are not restored:
+
+- `GET /v1/block`
+- `GET /v1/blocks`
+- `GET /v1/tx/<txid>` for transactions only present in pre-anchor blocks
+- CLI `block`
+- CLI `tx`
+- CLI `chain-window`
+- CLI `reward-history`
+- CLI `reward-summary`
+- CLI `mining-history`
+- CLI `node-income-summary`
+- CLI `address-history`
+- CLI `top-miners`
+- CLI `top-nodes`
+- CLI `top-recipients`
+
+Surfaces that remain fully meaningful after snapshot bootstrap:
+
+- current chain tip and sync status
+- current UTXO and balance diagnostics
+- mempool state
+- mining template APIs
+- post-anchor block and transaction validation
+
+Next hardening step for snapshots:
+
+- add snapshot signature verification on top of checksum verification
+- allow one or more trusted signer public keys in node config
+- require at least one valid signature before snapshot import when signature enforcement is enabled
+- support multiple signers with either:
+  - any-trusted-signer acceptance
+  - configurable `M-of-N` quorum later if needed
 
 ## Stable Client API Subset
 
