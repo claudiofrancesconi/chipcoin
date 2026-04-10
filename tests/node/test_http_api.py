@@ -131,6 +131,13 @@ def test_http_api_exposes_mining_status_and_template() -> None:
         assert status_code == "200 OK"
         assert status_body["network"] == "mainnet"
         assert status_body["best_height"] == -1
+        assert status_body["bootstrap_mode"] == "full"
+        assert status_body["snapshot_anchor_height"] is None
+        assert status_body["snapshot_trust_mode"] == "off"
+        assert status_body["sync_phase"] == "idle"
+        assert status_body["local_height"] is None
+        assert status_body["remote_height"] is None
+        assert status_body["current_sync_peers"] == []
         assert template_code == "200 OK"
         assert template_body["template_id"]
         assert template_body["height"] == 0

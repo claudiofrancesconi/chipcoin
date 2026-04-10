@@ -57,6 +57,10 @@ class MinerWorker:
         self._active_client_index = 0
         self.accepted_blocks = 0
         self.rejected_blocks = 0
+        self.stale_template_count = 0
+        self.failover_count = 0
+        self.current_node_url: str | None = None
+        self.current_template_id: str | None = None
 
     def run(self) -> dict[str, object]:
         """Start mining until stopped or until the optional run budget expires."""
@@ -84,28 +88,46 @@ class MinerWorker:
             if bool(result.get("accepted")):
                 self.accepted_blocks += 1
                 self.logger.info(
-                    "block accepted height=%s hash=%s node=%s",
+                    "block accepted height=%s hash=%s node=%s template_id=%s submit_accepted_count=%s submit_rejected_count=%s failover_count=%s",
                     active_template.payload["height"],
                     result.get("block_hash"),
                     active_template.node_url,
+                    active_template.payload["template_id"],
+                    self.accepted_blocks,
+                    self.rejected_blocks,
+                    self.failover_count,
                 )
                 if self.config.mining_min_interval_seconds > 0:
                     self.time.sleep(self.config.mining_min_interval_seconds)
             else:
                 self.rejected_blocks += 1
                 self.logger.info(
-                    "block rejected reason=%s template_id=%s node=%s",
+                    "block rejected reason=%s template_id=%s node=%s submit_accepted_count=%s submit_rejected_count=%s failover_count=%s",
                     result.get("reason"),
                     active_template.payload["template_id"],
                     active_template.node_url,
+                    self.accepted_blocks,
+                    self.rejected_blocks,
+                    self.failover_count,
                 )
             active_template = None
+        return self.diagnostics()
+
+    def diagnostics(self) -> dict[str, object]:
+        """Return one operator-facing diagnostics snapshot."""
+
         return {
             "mining": True,
-            "accepted_blocks": self.accepted_blocks,
-            "rejected_blocks": self.rejected_blocks,
             "miner_id": self.config.miner_id,
             "node_urls": list(self.config.node_urls),
+            "current_node_endpoint": self.current_node_url,
+            "current_template_id": self.current_template_id,
+            "stale_template_count": self.stale_template_count,
+            "submit_accepted_count": self.accepted_blocks,
+            "submit_rejected_count": self.rejected_blocks,
+            "failover_count": self.failover_count,
+            "accepted_blocks": self.accepted_blocks,
+            "rejected_blocks": self.rejected_blocks,
         }
 
     def _acquire_template(self) -> ActiveTemplate:
@@ -126,13 +148,28 @@ class MinerWorker:
                 last_error = exc
                 self.logger.warning("mining node unavailable node=%s error=%s", client.base_url, exc)
                 continue
+            previous_url = self.clients[self._active_client_index].base_url
             self._active_client_index = index
+            self.current_node_url = client.base_url
+            self.current_template_id = str(template.get("template_id"))
+            if offset > 0:
+                self.failover_count += 1
+                self.logger.warning(
+                    "mining node failover from_node=%s to_node=%s failover_count=%s",
+                    previous_url,
+                    client.base_url,
+                    self.failover_count,
+                )
             self.logger.info(
-                "mining template acquired node=%s tip=%s height=%s template_id=%s",
+                "mining template acquired node=%s tip=%s height=%s template_id=%s stale_template_count=%s submit_accepted_count=%s submit_rejected_count=%s failover_count=%s",
                 client.base_url,
                 status.get("best_tip_hash"),
                 template.get("height"),
                 template.get("template_id"),
+                self.stale_template_count,
+                self.accepted_blocks,
+                self.rejected_blocks,
+                self.failover_count,
             )
             return ActiveTemplate(
                 node_url=client.base_url,
@@ -234,38 +271,43 @@ class MinerWorker:
 
         template_id = str(active_template.payload["template_id"])
         node_url = active_template.node_url
+        self.stale_template_count += 1
         if decision.reason == "expired":
             self.logger.info(
-                "template expired template_id=%s node=%s template_expiry=%s now=%s",
+                "template expired template_id=%s node=%s template_expiry=%s now=%s stale_template_count=%s",
                 template_id,
                 node_url,
                 decision.details["template_expiry"],
                 decision.details["now"],
+                self.stale_template_count,
             )
             return
         if decision.reason == "tip_changed":
             self.logger.info(
-                "template stale template_id=%s node=%s reason=tip_changed template_previous_block_hash=%s current_best_tip_hash=%s current_best_height=%s",
+                "template stale template_id=%s node=%s reason=tip_changed template_previous_block_hash=%s current_best_tip_hash=%s current_best_height=%s stale_template_count=%s",
                 template_id,
                 node_url,
                 decision.details["template_previous_block_hash"],
                 decision.details["current_best_tip_hash"],
                 decision.details["current_best_height"],
+                self.stale_template_count,
             )
             return
         if decision.reason == "status_refresh_failed":
             self.logger.warning(
-                "template refresh failed template_id=%s node=%s reason=status_refresh_failed error=%s",
+                "template refresh failed template_id=%s node=%s reason=status_refresh_failed error=%s stale_template_count=%s",
                 template_id,
                 node_url,
                 decision.details["error"],
+                self.stale_template_count,
             )
             return
         self.logger.info(
-            "template replaced template_id=%s node=%s reason=%s",
+            "template replaced template_id=%s node=%s reason=%s stale_template_count=%s",
             template_id,
             node_url,
             decision.reason,
+            self.stale_template_count,
         )
 
     def _build_coinbase(self, template_payload: dict[str, Any], extra_nonce: int) -> Transaction:

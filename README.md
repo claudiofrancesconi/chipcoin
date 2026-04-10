@@ -181,12 +181,38 @@ Chipcoin now supports two node bootstrap paths:
 Snapshot workflow:
 
 ```bash
-chipcoin --data /runtime/node.sqlite3 snapshot-export --snapshot-file /runtime/devnet.snapshot.json
-chipcoin --data /runtime/node.sqlite3 snapshot-import --snapshot-file /runtime/devnet.snapshot.json
-chipcoin --data /runtime/node.sqlite3 run --snapshot-file /runtime/devnet.snapshot.json --peer chipcoinprotocol.com:18444
+chipcoin --data /runtime/node.sqlite3 snapshot-export --snapshot-file /runtime/devnet.snapshot
+chipcoin --data /runtime/node.sqlite3 snapshot-import --snapshot-file /runtime/devnet.snapshot
+chipcoin --data /runtime/node.sqlite3 run --snapshot-file /runtime/devnet.snapshot --peer chipcoinprotocol.com:18444
 ```
 
 Use full sync when you want maximum assurance. Use snapshot bootstrap when you trust the snapshot publisher operationally and want a much faster first sync.
+
+Snapshot format notes:
+
+- `v2` is now the default export format
+- `v2` stores metadata plus a compressed binary payload container
+- `v1` JSON import remains supported for compatibility and debugging
+- force `v1` export when needed with:
+
+```bash
+chipcoin --data /runtime/node.sqlite3 snapshot-export --snapshot-file /runtime/devnet.snapshot.v1.json --snapshot-format v1
+```
+
+Signing works for both `v1` and `v2` snapshots:
+
+```bash
+chipcoin snapshot-sign --snapshot-file /runtime/devnet.snapshot --private-key-hex <ED25519_PRIVATE_KEY_HEX>
+```
+
+Signed snapshot import in strict mode:
+
+```bash
+chipcoin --data /runtime/node.sqlite3 snapshot-import \
+  --snapshot-file /runtime/devnet.snapshot \
+  --snapshot-trust-mode enforce \
+  --snapshot-trusted-key <ED25519_PUBLIC_KEY_HEX>
+```
 
 If you want your node to improve peer discovery and network resilience, keep `NODE_P2P_BIND_PORT=18444` and make that TCP port publicly reachable from the internet when your router and firewall policy allow it.
 

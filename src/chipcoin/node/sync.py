@@ -124,12 +124,24 @@ class SyncManager:
         best_header = self.best_header_record()
         missing = self.missing_blocks_for_best_tip()
         queued_missing = tuple(block_hash for block_hash in missing if block_hash not in self._inflight_blocks)
+        snapshot_anchor = self.node.snapshot_anchor()
+        local_height = None if validated_tip is None else validated_tip.height
+        remote_height = None if best_header is None else best_header.height
         if best_header is None:
             mode = "idle"
         elif missing:
             mode = "blocks" if self._inflight_blocks else "headers"
         else:
             mode = "synced"
+        if snapshot_anchor is not None:
+            if mode in {"headers", "blocks"}:
+                phase = "syncing_post_anchor_delta"
+            elif local_height == snapshot_anchor.height:
+                phase = "snapshot_imported"
+            else:
+                phase = "synced"
+        else:
+            phase = "synced" if mode == "synced" else ("syncing_from_genesis" if mode in {"headers", "blocks"} else "idle")
         window_start_height = None
         window_end_height = None
         if missing:
@@ -144,6 +156,9 @@ class SyncManager:
         )
         return {
             "mode": mode,
+            "phase": phase,
+            "local_height": local_height,
+            "remote_height": remote_height,
             "validated_tip_height": None if validated_tip is None else validated_tip.height,
             "validated_tip_hash": None if validated_tip is None else getattr(validated_tip, "block_hash", None),
             "best_header_height": None if best_header is None else best_header.height,

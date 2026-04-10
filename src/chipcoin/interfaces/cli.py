@@ -21,6 +21,14 @@ from ..node.messages import MessageEnvelope, TransactionMessage
 from ..node.p2p.protocol import LocalPeerIdentity, PeerProtocol
 from ..node.service import NodeService
 from ..node.runtime import NodeRuntime, OutboundPeer
+from ..node.snapshots import (
+    ed25519_public_key_hex_from_private_key,
+    parse_ed25519_private_key_hex,
+    parse_ed25519_public_key_hex,
+    read_snapshot_payload,
+    sign_snapshot_payload,
+    write_snapshot_file,
+)
 from ..node.sync import SyncManager
 from ..wallet.models import WalletKey
 from ..wallet.signer import TransactionSigner, generate_wallet_key, wallet_key_from_private_key
@@ -39,11 +47,20 @@ def main(argv: list[str] | None = None) -> int:
 
             configure_logging(args.log_level)
         data_path = resolve_data_path(args.data, args.network)
-        service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address", "mine", "submit-raw-tx"} else NodeService.open_sqlite(data_path, network=args.network)
+        service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address", "mine", "submit-raw-tx", "snapshot-sign"} else NodeService.open_sqlite(data_path, network=args.network)
 
         if service is not None and getattr(args, "snapshot_file", None) and args.command in {"run", "start"}:
             if getattr(args, "snapshot_reset", False) or service.chain_tip() is None:
-                service.import_snapshot_file(Path(args.snapshot_file), reset_existing=getattr(args, "snapshot_reset", False))
+                snapshot_metadata = service.import_snapshot_file(
+                    Path(args.snapshot_file),
+                    reset_existing=getattr(args, "snapshot_reset", False),
+                    trust_mode=getattr(args, "snapshot_trust_mode", "off"),
+                    trusted_keys=_load_snapshot_trusted_keys(
+                        getattr(args, "snapshot_trusted_key", []),
+                        getattr(args, "snapshot_trusted_keys_file", []),
+                    ),
+                )
+                _emit_snapshot_warnings(snapshot_metadata, trust_mode=getattr(args, "snapshot_trust_mode", "off"))
 
         if args.command == "start":
             assert service is not None
@@ -360,12 +377,39 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "snapshot-export":
             assert service is not None
-            _print_json(service.export_snapshot_file(Path(args.snapshot_file)))
+            _print_json(
+                service.export_snapshot_file(
+                    Path(args.snapshot_file),
+                    format_version=1 if args.snapshot_format == "v1" else 2,
+                )
+            )
             return 0
 
         if args.command == "snapshot-import":
             assert service is not None
-            _print_json(service.import_snapshot_file(Path(args.snapshot_file), reset_existing=args.snapshot_reset))
+            payload = service.import_snapshot_file(
+                Path(args.snapshot_file),
+                reset_existing=args.snapshot_reset,
+                trust_mode=args.snapshot_trust_mode,
+                trusted_keys=_load_snapshot_trusted_keys(args.snapshot_trusted_key, args.snapshot_trusted_keys_file),
+            )
+            _emit_snapshot_warnings(payload, trust_mode=args.snapshot_trust_mode)
+            _print_json(payload)
+            return 0
+
+        if args.command == "snapshot-sign":
+            payload = read_snapshot_payload(Path(args.snapshot_file))
+            private_key = parse_ed25519_private_key_hex(args.private_key_hex)
+            signed_payload = sign_snapshot_payload(payload, private_key=private_key)
+            write_snapshot_file(Path(args.snapshot_file), signed_payload)
+            signatures = signed_payload["metadata"].get("signatures", [])
+            _print_json(
+                {
+                    "snapshot_file": str(Path(args.snapshot_file)),
+                    "signer_public_key_hex": ed25519_public_key_hex_from_private_key(private_key),
+                    "signature_count": len(signatures) if isinstance(signatures, list) else 0,
+                }
+            )
             return 0
 
         if args.command == "wallet-generate":
@@ -504,6 +548,9 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--http-port", type=int, default=None)
     run_parser.add_argument("--snapshot-file", default=None, help="Optional local snapshot file for fast bootstrap.")
     run_parser.add_argument("--snapshot-reset", action="store_true", help="Replace existing local chain state when importing a snapshot.")
+    run_parser.add_argument("--snapshot-trust-mode", choices=("off", "warn", "enforce"), default="off")
+    run_parser.add_argument("--snapshot-trusted-key", action="append", default=[], help="Trusted Ed25519 signer public key hex for snapshot verification.")
+    run_parser.add_argument("--snapshot-trusted-keys-file", action="append", default=[], help="Path to a text or JSON file containing trusted Ed25519 signer public keys.")
     run_parser.add_argument("--peer", action="append", default=[], help="Outbound peer in host:port form.")
     run_parser.add_argument("--peer-source", choices=("manual", "seed"), default="manual")
     run_parser.add_argument("--run-seconds", type=float, default=None, help="Stop automatically after N seconds.")
@@ -625,10 +672,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
     snapshot_export_parser = subparsers.add_parser("snapshot-export")
     snapshot_export_parser.add_argument("--snapshot-file", required=True)
+    snapshot_export_parser.add_argument("--snapshot-format", choices=("v1", "v2"), default="v2")
 
     snapshot_import_parser = subparsers.add_parser("snapshot-import")
     snapshot_import_parser.add_argument("--snapshot-file", required=True)
     snapshot_import_parser.add_argument("--snapshot-reset", action="store_true")
+    snapshot_import_parser.add_argument("--snapshot-trust-mode", choices=("off", "warn", "enforce"), default="off")
+    snapshot_import_parser.add_argument("--snapshot-trusted-key", action="append", default=[], help="Trusted Ed25519 signer public key hex for snapshot verification.")
+    snapshot_import_parser.add_argument("--snapshot-trusted-keys-file", action="append", default=[], help="Path to a text or JSON file containing trusted Ed25519 signer public keys.")
+
+    snapshot_sign_parser = subparsers.add_parser("snapshot-sign")
+    snapshot_sign_parser.add_argument("--snapshot-file", required=True)
+    snapshot_sign_parser.add_argument("--private-key-hex", required=True, help="Raw 32-byte Ed25519 private key hex.")
 
     wallet_generate = subparsers.add_parser("wallet-generate")
     wallet_generate.add_argument("--wallet-file", required=True)
@@ -684,6 +739,13 @@ def _print_error(message: str) -> None:
     sys.stderr.write("\n")
 
 
+def _print_warning(message: str) -> None:
+    """Print a readable JSON warning payload to stderr."""
+
+    json.dump({"warning": message}, sys.stderr, sort_keys=True)
+    sys.stderr.write("\n")
+
+
 def _parse_bool(raw: str) -> bool:
     """Parse one shell-friendly boolean CLI value."""
 
@@ -693,6 +755,56 @@ def _parse_bool(raw: str) -> bool:
     if value in {"0", "false", "no", "off"}:
         return False
     raise argparse.ArgumentTypeError(f"invalid boolean value: {raw}")
+
+
+def _parse_snapshot_trusted_keys(values: list[str]) -> tuple[bytes, ...]:
+    """Decode all trusted snapshot signer public keys from CLI input."""
+
+    return tuple(parse_ed25519_public_key_hex(value) for value in values)
+
+
+def _load_snapshot_trusted_keys(values: list[str], files: list[str]) -> tuple[bytes, ...]:
+    """Load trusted snapshot signer public keys from CLI flags and files."""
+
+    loaded_keys = list(_parse_snapshot_trusted_keys(values))
+    for raw_path in files:
+        path = Path(raw_path)
+        text = path.read_text(encoding="utf-8").strip()
+        if not text:
+            continue
+        if text.startswith("{") or text.startswith("["):
+            payload = json.loads(text)
+            if isinstance(payload, dict):
+                raw_values = payload.get("trusted_keys", [])
+            elif isinstance(payload, list):
+                raw_values = payload
+            else:
+                raise ValueError(f"Unsupported snapshot trusted keys file format: {path}")
+            if not isinstance(raw_values, list):
+                raise ValueError(f"snapshot trusted keys file must contain a list: {path}")
+            loaded_keys.extend(parse_ed25519_public_key_hex(str(value)) for value in raw_values)
+            continue
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            loaded_keys.append(parse_ed25519_public_key_hex(stripped))
+    deduped: dict[str, bytes] = {}
+    for key in loaded_keys:
+        deduped[key.hex()] = key
+    return tuple(deduped.values())
+
+
+def _emit_snapshot_warnings(metadata: dict[str, object], *, trust_mode: str) -> None:
+    """Emit operator-facing warnings when warn mode accepted a weak snapshot."""
+
+    if trust_mode != "warn":
+        return
+    warnings = metadata.get("warnings", [])
+    if not isinstance(warnings, list):
+        return
+    for warning in warnings:
+        _print_warning(f"{warning}; snapshot import continued only because --snapshot-trust-mode=warn")
 
 
 def _normalize_node_url(raw: str) -> str:

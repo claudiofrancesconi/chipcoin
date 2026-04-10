@@ -123,6 +123,9 @@ def test_miner_worker_fetches_template_immediately_and_mines_remote_block() -> N
         result = worker.run()
 
         assert result["accepted_blocks"] >= 1
+        assert result["current_node_endpoint"] == "memory://node"
+        assert result["submit_accepted_count"] >= 1
+        assert result["submit_rejected_count"] == 0
         assert service.chain_tip() is not None
 
 
@@ -201,6 +204,8 @@ def test_miner_worker_fails_over_to_secondary_node() -> None:
         result = worker.run()
 
         assert result["accepted_blocks"] >= 1
+        assert result["current_node_endpoint"] == "memory://secondary"
+        assert result["failover_count"] == 1
 
 
 def test_miner_worker_template_startup_does_not_depend_on_history_depth() -> None:

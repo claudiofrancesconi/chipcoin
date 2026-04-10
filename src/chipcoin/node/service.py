@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal, ROUND_DOWN
 from dataclasses import dataclass, replace
+import json
 from pathlib import Path
 import secrets
 
@@ -40,6 +41,7 @@ from .snapshots import (
     SnapshotHeaderRecord,
     build_snapshot_payload,
     load_snapshot_file,
+    read_snapshot_payload,
     write_snapshot_file,
 )
 from ..wallet.models import SpendCandidate
@@ -198,7 +200,7 @@ class NodeService:
 
         return None
 
-    def export_snapshot_payload(self) -> dict[str, object]:
+    def export_snapshot_payload(self, *, format_version: int = 2) -> dict[str, object]:
         """Return a deterministic snapshot payload for fast bootstrap."""
 
         tip = self.chain_tip()
@@ -226,21 +228,41 @@ class NodeService:
             headers=tuple(headers),
             utxos=tuple(self.chainstate.list_utxos()),
             node_registry_records=tuple(self.node_registry.list_records()),
+            format_version=format_version,
         )
 
-    def export_snapshot_file(self, path: Path) -> dict[str, object]:
+    def export_snapshot_file(self, path: Path, *, format_version: int = 2) -> dict[str, object]:
         """Write a fast-sync snapshot to disk and return its metadata."""
 
-        payload = self.export_snapshot_payload()
+        payload = self.export_snapshot_payload(format_version=format_version)
         write_snapshot_file(path, payload)
-        return dict(payload["metadata"])
+        return dict(read_snapshot_payload(path)["metadata"])
 
-    def import_snapshot_file(self, path: Path, *, reset_existing: bool = False) -> dict[str, object]:
+    def import_snapshot_file(
+        self,
+        path: Path,
+        *,
+        reset_existing: bool = False,
+        trust_mode: str = "off",
+        trusted_keys: tuple[bytes, ...] = (),
+    ) -> dict[str, object]:
         """Load a snapshot from disk and replace local chainstate with its anchor state."""
 
-        loaded = load_snapshot_file(path, network=self.network, params=self.params)
+        loaded = load_snapshot_file(
+            path,
+            network=self.network,
+            params=self.params,
+            trust_mode=trust_mode,
+            trusted_keys=trusted_keys,
+        )
         self.import_snapshot(loaded, reset_existing=reset_existing)
-        return dict(loaded.metadata)
+        self._set_chain_meta("snapshot_trust_mode", trust_mode)
+        metadata = dict(loaded.metadata)
+        metadata["valid_signature_count"] = loaded.valid_signature_count
+        metadata["trusted_signature_count"] = loaded.trusted_signature_count
+        metadata["accepted_signer_pubkeys"] = list(loaded.accepted_signer_pubkeys)
+        metadata["warnings"] = list(loaded.warnings)
+        return metadata
 
     def import_snapshot(self, snapshot: LoadedSnapshot, *, reset_existing: bool = False) -> None:
         """Replace local persistent chainstate with one verified snapshot."""
@@ -273,6 +295,11 @@ class NodeService:
         self._set_chain_meta("snapshot_block_hash", snapshot.anchor.block_hash)
         self._set_chain_meta("snapshot_checksum_sha256", str(snapshot.metadata["checksum_sha256"]))
         self._set_chain_meta("snapshot_format_version", str(snapshot.metadata["format_version"]))
+        self._set_chain_meta("snapshot_signature_verified", "true" if snapshot.valid_signature_count > 0 else "false")
+        self._set_chain_meta("snapshot_valid_signature_count", str(snapshot.valid_signature_count))
+        self._set_chain_meta("snapshot_trusted_signature_count", str(snapshot.trusted_signature_count))
+        self._set_chain_meta("snapshot_accepted_signer_pubkeys", json.dumps(list(snapshot.accepted_signer_pubkeys)))
+        self._set_chain_meta("snapshot_trust_warnings", json.dumps(list(snapshot.warnings)))
         self.invalidate_mining_templates()
         self.set_runtime_sync_status(None)
 
@@ -325,10 +352,20 @@ class NodeService:
         best_height = -1 if tip is None else tip.height
         best_tip_hash = "00" * 32 if tip is None else tip.block_hash
         target_bits = self.expected_next_bits()
+        sync_status = self.sync_status()
+        snapshot_anchor = self.snapshot_anchor()
         return {
             "network": self.network,
             "best_tip_hash": best_tip_hash,
             "best_height": best_height,
+            "bootstrap_mode": "full" if snapshot_anchor is None else "snapshot",
+            "snapshot_anchor_height": None if snapshot_anchor is None else snapshot_anchor.height,
+            "snapshot_anchor_hash": None if snapshot_anchor is None else snapshot_anchor.block_hash,
+            "snapshot_trust_mode": self._get_chain_meta("snapshot_trust_mode") or "off",
+            "sync_phase": str(sync_status.get("phase", sync_status.get("mode", "idle"))),
+            "local_height": sync_status.get("local_height"),
+            "remote_height": sync_status.get("remote_height"),
+            "current_sync_peers": sync_status.get("current_sync_peers", ()),
             "target_bits": target_bits,
             "target_hex": self._format_target(target_bits),
             "difficulty": self._difficulty_ratio(target_bits),
@@ -1080,11 +1117,24 @@ class NodeService:
         handshaken_peer_count = sum(1 for peer in peers if peer.handshake_complete)
         banned_peer_count = sum(1 for peer in peers if peer.ban_until is not None and peer.ban_until > self.time_provider())
         sync_status = self.sync_status()
+        snapshot_anchor = self.snapshot_anchor()
+        accepted_signer_pubkeys_raw = self._get_chain_meta("snapshot_accepted_signer_pubkeys")
+        accepted_signer_pubkeys = [] if accepted_signer_pubkeys_raw is None else json.loads(accepted_signer_pubkeys_raw)
+        snapshot_trust_warnings_raw = self._get_chain_meta("snapshot_trust_warnings")
+        snapshot_trust_warnings = [] if snapshot_trust_warnings_raw is None else json.loads(snapshot_trust_warnings_raw)
         return {
             "network": self.network,
             "network_magic_hex": get_network_config(self.network).magic.hex(),
             "height": None if tip is None else tip.height,
             "tip_hash": None if tip is None else tip.block_hash,
+            "bootstrap_mode": "full" if snapshot_anchor is None else "snapshot",
+            "snapshot_anchor_height": None if snapshot_anchor is None else snapshot_anchor.height,
+            "snapshot_anchor_hash": None if snapshot_anchor is None else snapshot_anchor.block_hash,
+            "snapshot_trust_mode": self._get_chain_meta("snapshot_trust_mode") or "off",
+            "snapshot_signature_verified": self._get_chain_meta("snapshot_signature_verified") == "true",
+            "accepted_snapshot_signer_pubkeys": accepted_signer_pubkeys,
+            "snapshot_trust_warnings": snapshot_trust_warnings,
+            "sync_phase": str(sync_status.get("phase", sync_status.get("mode", "idle"))),
             "current_bits": self.params.genesis_bits if header is None else header.bits,
             "current_target": self._format_target(self.params.genesis_bits if header is None else header.bits),
             "current_difficulty_ratio": self._difficulty_ratio(self.params.genesis_bits if header is None else header.bits),
@@ -1101,6 +1151,7 @@ class NodeService:
                 handshaken_peer_count=handshaken_peer_count,
                 banned_peer_count=banned_peer_count,
                 sync_status=sync_status,
+                snapshot_trust_warnings=tuple(str(item) for item in snapshot_trust_warnings),
             ),
             "next_block_reward_winners": [
                 {
@@ -1120,6 +1171,7 @@ class NodeService:
         handshaken_peer_count: int,
         banned_peer_count: int,
         sync_status: dict[str, object],
+        snapshot_trust_warnings: tuple[str, ...] = (),
     ) -> dict[str, object]:
         """Return a concise operator-oriented summary for status surfaces."""
 
@@ -1147,6 +1199,7 @@ class NodeService:
             warnings.append("missing_blocks_for_best_header")
         if isinstance(stalled_peers, tuple) and stalled_peers:
             warnings.append("stalled_peers_present")
+        warnings.extend(snapshot_trust_warnings)
         return {
             "sync_state": sync_mode,
             "connectivity_state": connectivity_state,
@@ -1165,8 +1218,17 @@ class NodeService:
         if self._runtime_sync_status is not None:
             return dict(self._runtime_sync_status)
         tip = self.chain_tip()
+        snapshot_anchor = self.snapshot_anchor()
+        local_height = None if tip is None else tip.height
+        if snapshot_anchor is not None and local_height == snapshot_anchor.height:
+            phase = "snapshot_imported"
+        else:
+            phase = "idle"
         return {
             "mode": "idle",
+            "phase": phase,
+            "local_height": local_height,
+            "remote_height": local_height,
             "validated_tip_height": None if tip is None else tip.height,
             "validated_tip_hash": None if tip is None else tip.block_hash,
             "best_header_height": None if tip is None else tip.height,
@@ -1180,6 +1242,7 @@ class NodeService:
             "block_peer_count": 0,
             "block_peers": (),
             "stalled_peers": (),
+            "current_sync_peers": (),
             "download_window": {
                 "start_height": None,
                 "end_height": None,

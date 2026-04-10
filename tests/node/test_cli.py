@@ -9,6 +9,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
@@ -81,6 +83,20 @@ def _require_local_socket_support() -> None:
         raise pytest.skip(f"local TCP binds are unavailable in this environment: {exc}") from exc
 
 
+def _ed25519_private_key_hex() -> tuple[str, str]:
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    private_bytes = private_key.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    public_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return private_bytes.hex(), public_bytes.hex()
+
+
 def test_cli_start_returns_status_snapshot() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
@@ -133,10 +149,19 @@ def test_cli_status_and_tip() -> None:
         assert status_code == 0
         assert status_payload["height"] == 0
         assert status_payload["tip_hash"] == mined.block_hash()
+        assert status_payload["bootstrap_mode"] == "full"
+        assert status_payload["snapshot_anchor_height"] is None
+        assert status_payload["snapshot_anchor_hash"] is None
+        assert status_payload["snapshot_trust_mode"] == "off"
+        assert status_payload["accepted_snapshot_signer_pubkeys"] == []
+        assert status_payload["sync_phase"] == "idle"
         assert status_payload["current_bits"] == mined.header.bits
         assert status_payload["cumulative_work"] is not None
         assert status_payload["expected_next_bits"] == mined.header.bits
         assert status_payload["sync"]["mode"] == "idle"
+        assert status_payload["sync"]["phase"] == "idle"
+        assert status_payload["sync"]["local_height"] == 0
+        assert status_payload["sync"]["remote_height"] == 0
         assert status_payload["operator_summary"] == {
             "sync_state": "idle",
             "connectivity_state": "no_known_peers",
@@ -220,6 +245,127 @@ def test_cli_snapshot_export_and_import() -> None:
         assert import_payload["snapshot_block_hash"] == mined.block_hash()
         assert imported_service.chain_tip() is not None
         assert imported_service.chain_tip().block_hash == mined.block_hash()
+
+
+def test_cli_snapshot_sign_and_enforce_import() -> None:
+    with TemporaryDirectory() as tempdir:
+        source_db = Path(tempdir) / "source.sqlite3"
+        target_db = Path(tempdir) / "target.sqlite3"
+        snapshot_path = Path(tempdir) / "chain.snapshot.json"
+        source = _make_service(source_db)
+        mined = _mine_block(source.build_candidate_block("CHCminer").block)
+        source.apply_block(mined)
+        private_key_hex, public_key_hex = _ed25519_private_key_hex()
+
+        export_code, export_payload = _run_cli(
+            ["--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)]
+        )
+        sign_code, sign_payload = _run_cli(
+            [
+                "snapshot-sign",
+                "--snapshot-file",
+                str(snapshot_path),
+                "--private-key-hex",
+                private_key_hex,
+            ]
+        )
+        import_code, import_payload = _run_cli(
+            [
+                "--network",
+                "mainnet",
+                "--data",
+                str(target_db),
+                "snapshot-import",
+                "--snapshot-file",
+                str(snapshot_path),
+                "--snapshot-trust-mode",
+                "enforce",
+                "--snapshot-trusted-key",
+                public_key_hex,
+            ]
+        )
+
+        imported_service = _make_service(target_db)
+        assert export_code == 0
+        assert export_payload["snapshot_block_hash"] == mined.block_hash()
+        assert sign_code == 0
+        assert sign_payload["signer_public_key_hex"] == public_key_hex
+        assert sign_payload["signature_count"] == 1
+        assert import_code == 0
+        assert import_payload["trusted_signature_count"] == 1
+        assert imported_service.chain_tip() is not None
+        assert imported_service.chain_tip().block_hash == mined.block_hash()
+
+
+def test_cli_snapshot_import_warn_mode_emits_warning_for_unsigned_snapshot() -> None:
+    with TemporaryDirectory() as tempdir:
+        source_db = Path(tempdir) / "source.sqlite3"
+        target_db = Path(tempdir) / "target.sqlite3"
+        snapshot_path = Path(tempdir) / "chain.snapshot.json"
+        source = _make_service(source_db)
+        mined = _mine_block(source.build_candidate_block("CHCminer").block)
+        source.apply_block(mined)
+
+        export_code, _ = _run_cli(["--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)])
+        import_code, stdout, stderr = _run_cli_with_stderr(
+            [
+                "--data",
+                str(target_db),
+                "snapshot-import",
+                "--snapshot-file",
+                str(snapshot_path),
+                "--snapshot-trust-mode",
+                "warn",
+            ]
+        )
+
+        imported_payload = json.loads(stdout)
+        warning_payload = json.loads(stderr)
+        assert export_code == 0
+        assert import_code == 0
+        assert imported_payload["warnings"] == ["snapshot_unsigned_but_accepted_due_to_warn_mode"]
+        assert "continued only because --snapshot-trust-mode=warn" in warning_payload["warning"]
+
+
+def test_cli_snapshot_import_reads_trusted_keys_file() -> None:
+    with TemporaryDirectory() as tempdir:
+        source_db = Path(tempdir) / "source.sqlite3"
+        target_db = Path(tempdir) / "target.sqlite3"
+        snapshot_path = Path(tempdir) / "chain.snapshot.json"
+        keys_path = Path(tempdir) / "trusted-keys.json"
+        source = _make_service(source_db)
+        mined = _mine_block(source.build_candidate_block("CHCminer").block)
+        source.apply_block(mined)
+        private_key_hex, public_key_hex = _ed25519_private_key_hex()
+
+        _run_cli(["--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)])
+        _run_cli(
+            [
+                "snapshot-sign",
+                "--snapshot-file",
+                str(snapshot_path),
+                "--private-key-hex",
+                private_key_hex,
+            ]
+        )
+        keys_path.write_text(json.dumps({"trusted_keys": [public_key_hex]}), encoding="utf-8")
+
+        import_code, import_payload = _run_cli(
+            [
+                "--data",
+                str(target_db),
+                "snapshot-import",
+                "--snapshot-file",
+                str(snapshot_path),
+                "--snapshot-trust-mode",
+                "enforce",
+                "--snapshot-trusted-keys-file",
+                str(keys_path),
+            ]
+        )
+
+        assert import_code == 0
+        assert import_payload["trusted_signature_count"] == 1
 
 
 def test_cli_add_peer_and_list_peers() -> None:

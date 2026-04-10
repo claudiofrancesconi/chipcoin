@@ -211,19 +211,19 @@ Useful endpoints:
 Export the current active chainstate as a trusted fast-sync snapshot:
 
 ```bash
-chipcoin --data /runtime/node.sqlite3 snapshot-export --snapshot-file /runtime/devnet.snapshot.json
+chipcoin --data /runtime/node.sqlite3 snapshot-export --snapshot-file /runtime/devnet.snapshot
 ```
 
 Import a snapshot into an empty database:
 
 ```bash
-chipcoin --data /runtime/node.sqlite3 snapshot-import --snapshot-file /runtime/devnet.snapshot.json
+chipcoin --data /runtime/node.sqlite3 snapshot-import --snapshot-file /runtime/devnet.snapshot
 ```
 
 Replace existing chainstate with a snapshot:
 
 ```bash
-chipcoin --data /runtime/node.sqlite3 snapshot-import --snapshot-file /runtime/devnet.snapshot.json --snapshot-reset
+chipcoin --data /runtime/node.sqlite3 snapshot-import --snapshot-file /runtime/devnet.snapshot --snapshot-reset
 ```
 
 Snapshot contents:
@@ -234,12 +234,61 @@ Snapshot contents:
 - current on-chain node registry state
 - compatibility metadata and checksum
 
-Snapshot files currently use:
+Snapshot formats:
 
-- deterministic JSON
-- SHA-256 checksum verification
-- format versioning fields
-- optional signature fields reserved in metadata but not enforced yet
+- `v2` is the default export format
+- `v2` uses:
+  - explicit metadata JSON
+  - compressed binary payload container
+  - SHA-256 checksum verification
+  - Ed25519 signatures over the canonical logical payload
+  - compatibility fields in metadata
+- `v1` remains supported for import and can still be exported explicitly:
+
+```bash
+chipcoin --data /runtime/node.sqlite3 snapshot-export \
+  --snapshot-file /runtime/devnet.snapshot.v1.json \
+  --snapshot-format v1
+```
+
+Sign either `v1` or `v2` snapshot files:
+
+```bash
+chipcoin snapshot-sign --snapshot-file /runtime/devnet.snapshot --private-key-hex <ED25519_PRIVATE_KEY_HEX>
+```
+
+Import with signature enforcement:
+
+```bash
+chipcoin --data /runtime/node.sqlite3 snapshot-import \
+  --snapshot-file /runtime/devnet.snapshot \
+  --snapshot-trust-mode enforce \
+  --snapshot-trusted-key <ED25519_PUBLIC_KEY_HEX>
+```
+
+Import with trusted signer keys loaded from a file:
+
+```bash
+chipcoin --data /runtime/node.sqlite3 snapshot-import \
+  --snapshot-file /runtime/devnet.snapshot \
+  --snapshot-trust-mode enforce \
+  --snapshot-trusted-keys-file /etc/chipcoin/snapshot-trusted-keys.json
+```
+
+Trusted keys files can be:
+
+- plain text with one public key hex per line
+- JSON array of public key hex strings
+- JSON object with `trusted_keys`
+
+Warn mode continues past weak trust conditions but emits explicit warnings:
+
+```bash
+chipcoin --data /runtime/node.sqlite3 snapshot-import \
+  --snapshot-file /runtime/devnet.snapshot \
+  --snapshot-trust-mode warn \
+  --snapshot-trusted-key <ED25519_PUBLIC_KEY_HEX>
+```
 
 Current limitations of snapshot nodes:
 
@@ -283,12 +332,9 @@ Surfaces that remain fully meaningful after snapshot bootstrap:
 
 Next hardening step for snapshots:
 
-- add snapshot signature verification on top of checksum verification
-- allow one or more trusted signer public keys in node config
-- require at least one valid signature before snapshot import when signature enforcement is enabled
-- support multiple signers with either:
-  - any-trusted-signer acceptance
-  - configurable `M-of-N` quorum later if needed
+- add stronger signer policy beyond any-trusted-signer acceptance
+- support configurable `M-of-N` quorum later if needed
+- add signer rotation / revocation policy
 
 ## Stable Client API Subset
 

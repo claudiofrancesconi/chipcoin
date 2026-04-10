@@ -194,6 +194,7 @@ class NodeRuntime:
             (peer.host, peer.port): "manual" for peer in (outbound_peers or [])
         }
         self._relayed_mempool_txids: set[str] = set()
+        self._last_logged_sync_phase: str | None = None
 
     @property
     def bound_port(self) -> int:
@@ -222,13 +223,16 @@ class NodeRuntime:
         self._start_http_api_server()
         self._running = True
         self.logger.info(
-            "runtime started network=%s listen=%s:%s outbound_targets=%s ping_interval=%s read_timeout=%s",
+            "runtime started network=%s listen=%s:%s outbound_targets=%s ping_interval=%s read_timeout=%s bootstrap_mode=%s snapshot_anchor_height=%s snapshot_anchor_hash=%s",
             self.service.network,
             self.listen_host,
             self.bound_port,
             len(self._outbound_targets),
             self.ping_interval,
             self.read_timeout,
+            "full" if self.service.snapshot_anchor() is None else "snapshot",
+            None if self.service.snapshot_anchor() is None else self.service.snapshot_anchor().height,
+            None if self.service.snapshot_anchor() is None else self.service.snapshot_anchor().block_hash,
         )
         self._persist_configured_peer_targets()
         self._purge_persisted_self_aliases()
@@ -1191,7 +1195,43 @@ class NodeRuntime:
     def _update_sync_status(self) -> None:
         """Publish the latest sync snapshot through the service diagnostics surface."""
 
-        self.service.set_runtime_sync_status(self.sync_manager.sync_status())
+        payload = self.sync_manager.sync_status()
+        payload["current_sync_peers"] = tuple(self._current_sync_peers())
+        self.service.set_runtime_sync_status(payload)
+        phase = str(payload.get("phase", payload.get("mode", "idle")))
+        if phase != self._last_logged_sync_phase:
+            self._last_logged_sync_phase = phase
+            self.logger.info(
+                "sync phase changed phase=%s local_height=%s remote_height=%s current_sync_peers=%s",
+                phase,
+                payload.get("local_height"),
+                payload.get("remote_height"),
+                len(payload["current_sync_peers"]),
+            )
+
+    def _current_sync_peers(self) -> list[dict[str, object]]:
+        """Return active sync peer diagnostics for status surfaces."""
+
+        peers: list[dict[str, object]] = []
+        for handle in self._sessions.values():
+            protocol = handle.protocol
+            if not protocol.handshake_complete:
+                continue
+            if not handle.headers_sync_active and not handle.inflight_block_hashes and handle.sync_target_height is None:
+                continue
+            peers.append(
+                {
+                    "node_id": protocol.remote.node_id if protocol.remote is not None else None,
+                    "direction": "outbound" if handle.outbound else "inbound",
+                    "endpoint": None if handle.endpoint is None else f"{handle.endpoint.host}:{handle.endpoint.port}",
+                    "sync_target_height": handle.sync_target_height,
+                    "headers_sync_active": handle.headers_sync_active,
+                    "inflight_block_count": len(handle.inflight_block_hashes),
+                    "blocks_contributed": handle.blocks_contributed,
+                    "headers_contributed": handle.headers_contributed,
+                }
+            )
+        return peers
 
     def _is_catchup_sync_active(self) -> bool:
         """Return whether the node is still catching up to the best known header tip."""
