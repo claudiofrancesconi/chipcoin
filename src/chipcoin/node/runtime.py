@@ -1219,9 +1219,10 @@ class NodeRuntime:
                 continue
             if not handle.headers_sync_active and not handle.inflight_block_hashes and handle.sync_target_height is None:
                 continue
+            remote_version = protocol.state.remote_version
             peers.append(
                 {
-                    "node_id": protocol.remote.node_id if protocol.remote is not None else None,
+                    "node_id": None if remote_version is None else remote_version.node_id,
                     "direction": "outbound" if handle.outbound else "inbound",
                     "endpoint": None if handle.endpoint is None else f"{handle.endpoint.host}:{handle.endpoint.port}",
                     "sync_target_height": handle.sync_target_height,
