@@ -212,11 +212,16 @@ start_bootstrap_announce_loop() {
   fi
 
   (
+    local announce_was_healthy=0
     while true; do
       if bootstrap_announce_once; then
-        log "Bootstrap announce succeeded bootstrap_url=${BOOTSTRAP_URL} public_host=${NODE_PUBLIC_HOST} public_port=${NODE_PUBLIC_P2P_PORT}"
+        if [[ "$announce_was_healthy" -eq 0 ]]; then
+          log "Bootstrap announce succeeded bootstrap_url=${BOOTSTRAP_URL} public_host=${NODE_PUBLIC_HOST} public_port=${NODE_PUBLIC_P2P_PORT}"
+          announce_was_healthy=1
+        fi
       else
         warn "Bootstrap announce failed bootstrap_url=${BOOTSTRAP_URL} public_host=${NODE_PUBLIC_HOST} public_port=${NODE_PUBLIC_P2P_PORT}"
+        announce_was_healthy=0
       fi
       sleep "$refresh_interval"
     done
