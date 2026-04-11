@@ -103,6 +103,26 @@ def test_configure_node_discovery_defaults_to_bootstrap_and_public_standard_port
     assert env_values["NODE_PUBLIC_P2P_PORT"] == env_values["NODE_P2P_BIND_PORT"] == "18444"
 
 
+def test_configure_node_discovery_uses_known_public_host_as_default(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+    env_values["DEFAULT_BOOTSTRAP_PEER"] = "chipcoinprotocol.com:18444"
+    answers = iter([
+        "",   # bootstrap seed default
+        "",   # default bootstrap URL
+        "yes",
+        "",   # accept derived public host default
+        "",   # accept standard public port default
+    ])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    wizard._configure_node_discovery(env_values, setup_mode="quick")
+
+    assert env_values["BOOTSTRAP_ANNOUNCE_ENABLED"] == "true"
+    assert env_values["NODE_PUBLIC_HOST"] == "chipcoinprotocol.com"
+    assert env_values["NODE_PUBLIC_P2P_PORT"] == "18444"
+
+
 def test_configure_node_discovery_manual_mode_disables_bootstrap_url(monkeypatch) -> None:
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
