@@ -148,7 +148,7 @@ PY
       printf '%s\n' "$peers"
       return 0
     fi
-    warn "Bootstrap discovery failed or returned no peers. Starting isolated."
+    warn "Bootstrap discovery from ${BOOTSTRAP_URL} failed or returned no peers. Starting isolated."
   fi
 
   return 1
@@ -231,7 +231,11 @@ run_node() {
       startup_peer_count=$((startup_peer_count + 1))
     done <<< "$peers"
     peer_args+=(--peer-source "${DISCOVERY_SOURCE:-manual}")
-    log "Node discovery target=${DISCOVERY_SOURCE:-manual}:${startup_peer_count}_peer(s)"
+    if [[ "${DISCOVERY_SOURCE:-manual}" == "seed" ]]; then
+      log "Node discovery target=bootstrap-seed:${startup_peer_count}_peer(s) bootstrap_url=${BOOTSTRAP_URL}"
+    else
+      log "Node discovery target=manual:${startup_peer_count}_peer(s)"
+    fi
   else
     log "Node discovery target=isolated"
     if [[ "${PEER_DISCOVERY_ENABLED:-true}" != "true" && "${PEER_DISCOVERY_ENABLED:-true}" != "1" ]]; then
