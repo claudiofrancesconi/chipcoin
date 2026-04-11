@@ -120,7 +120,7 @@ resolve_peers() {
   if peers="$(normalize_manual_peers)"; then
     if [[ -n "$peers" ]]; then
       DISCOVERY_SOURCE="manual"
-      printf '%s\n' "$peers"
+      RESOLVED_PEERS="$peers"
       return 0
     fi
   else
@@ -145,7 +145,7 @@ for peer in peers[:peer_limit]:
 PY
 ); then
       DISCOVERY_SOURCE="seed"
-      printf '%s\n' "$peers"
+      RESOLVED_PEERS="$peers"
       return 0
     fi
     warn "Bootstrap discovery from ${BOOTSTRAP_URL} failed or returned no peers. Starting isolated."
@@ -225,7 +225,10 @@ run_node() {
 
   local -a peer_args=()
   local startup_peer_count=0
-  if peers="$(resolve_peers)"; then
+  local peers=""
+  RESOLVED_PEERS=""
+  if resolve_peers; then
+    peers="$RESOLVED_PEERS"
     log "Node discovery resolved source=${DISCOVERY_SOURCE:-manual} peers=$(printf '%s' "$peers" | tr '\n' ',' | sed 's/,$//')"
     while IFS= read -r peer; do
       [[ -n "$peer" ]] || continue
