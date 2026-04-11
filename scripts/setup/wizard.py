@@ -39,6 +39,10 @@ PUBLIC_DEVNET_BOOTSTRAP_PEER = "chipcoinprotocol.com:18444"
 PUBLIC_DEVNET_BOOTSTRAP_URL = "http://chipcoinprotocol.com:28080"
 PUBLIC_DEVNET_EXPLORER_URL = "https://explorer.chipcoinprotocol.com"
 PUBLIC_DEVNET_SNAPSHOT_MANIFEST_URL = "https://chipcoinprotocol.com/downloads/snapshots/devnet/latest.manifest.json"
+PUBLIC_IP_DETECT_URLS = (
+    "https://api.ipify.org",
+    "https://ifconfig.me/ip",
+)
 SNAPSHOT_STALE_WARNING_SECONDS = 6 * 60 * 60
 SNAPSHOT_LARGE_DELTA_WARNING_SECONDS = 24 * 60 * 60
 COMPOSE_FILE_PATH = REPO_ROOT / "docker-compose.yml"
@@ -289,6 +293,23 @@ def _default_public_host(env_values: dict[str, str]) -> str:
     configured = env_values.get("NODE_PUBLIC_HOST", "").strip()
     if configured and _looks_public_host(configured):
         return configured
+    detected = _detect_public_ip()
+    if detected:
+        return detected
+    return ""
+
+
+def _detect_public_ip() -> str:
+    """Return one best-effort detected public IP address for this host."""
+
+    for url in PUBLIC_IP_DETECT_URLS:
+        try:
+            with request.urlopen(url, timeout=3) as response:
+                candidate = response.read().decode("utf-8").strip()
+        except Exception:  # noqa: BLE001
+            continue
+        if _looks_public_host(candidate):
+            return candidate
     return ""
 
 

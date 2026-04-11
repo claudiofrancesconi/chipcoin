@@ -106,6 +106,7 @@ def test_configure_node_discovery_defaults_to_bootstrap_and_public_standard_port
 def test_configure_node_discovery_requires_explicit_public_host(monkeypatch) -> None:
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
+    monkeypatch.setattr(wizard, "_detect_public_ip", lambda: "")
     answers = iter([
         "",   # bootstrap seed default
         "",   # default bootstrap URL
@@ -119,6 +120,26 @@ def test_configure_node_discovery_requires_explicit_public_host(monkeypatch) -> 
 
     assert env_values["BOOTSTRAP_ANNOUNCE_ENABLED"] == "true"
     assert env_values["NODE_PUBLIC_HOST"] == "tilt.example.net"
+    assert env_values["NODE_PUBLIC_P2P_PORT"] == "18444"
+
+
+def test_configure_node_discovery_uses_detected_public_ip_as_default(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+    monkeypatch.setattr(wizard, "_detect_public_ip", lambda: "198.51.100.10")
+    answers = iter([
+        "",   # bootstrap seed default
+        "",   # default bootstrap URL
+        "yes",
+        "",   # accept detected public IP
+        "",   # accept standard public port default
+    ])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    wizard._configure_node_discovery(env_values, setup_mode="quick")
+
+    assert env_values["BOOTSTRAP_ANNOUNCE_ENABLED"] == "true"
+    assert env_values["NODE_PUBLIC_HOST"] == "198.51.100.10"
     assert env_values["NODE_PUBLIC_P2P_PORT"] == "18444"
 
 
