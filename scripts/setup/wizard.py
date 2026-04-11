@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import getpass
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -35,6 +36,7 @@ NODE_SNAPSHOT_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.snapshot")
 WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "chipcoin-wallet.json")
 PUBLIC_DEVNET_NODE_ENDPOINT = "https://api.chipcoinprotocol.com"
 PUBLIC_DEVNET_BOOTSTRAP_PEER = "chipcoinprotocol.com:18444"
+PUBLIC_DEVNET_BOOTSTRAP_URL = "http://chipcoinprotocol.com:28080"
 PUBLIC_DEVNET_EXPLORER_URL = "https://explorer.chipcoinprotocol.com"
 PUBLIC_DEVNET_SNAPSHOT_MANIFEST_URL = "https://chipcoinprotocol.com/downloads/snapshots/devnet/latest.manifest.json"
 SNAPSHOT_STALE_WARNING_SECONDS = 6 * 60 * 60
@@ -72,11 +74,15 @@ DEFAULTS = {
     "BROWSER_WALLET_DEFAULT_NODE_ENDPOINT": PUBLIC_DEVNET_NODE_ENDPOINT,
     "NODE_DIRECT_PEERS": "",
     "NODE_DIRECT_PEER": "",
-    "NODE_BOOTSTRAP_URL": "",
+    "NODE_BOOTSTRAP_URL": PUBLIC_DEVNET_BOOTSTRAP_URL,
+    "NODE_PUBLIC_HOST": "",
+    "NODE_PUBLIC_P2P_PORT": "18444",
     "DIRECT_PEERS": "",
     "DIRECT_PEER": "",
     "BOOTSTRAP_URL": "",
     "BOOTSTRAP_PEER_LIMIT": "4",
+    "BOOTSTRAP_ANNOUNCE_ENABLED": "false",
+    "BOOTSTRAP_REFRESH_INTERVAL_SECONDS": "60",
     "INITIAL_SYNC_CONSERVATIVE_DEFAULTS": "true",
 }
 
@@ -138,6 +144,7 @@ def main() -> int:
     env_values["CHIPCOIN_NETWORK"] = network
     _apply_setup_mode(env_values, setup_mode, role)
     if role in {"node", "both"}:
+        _configure_node_discovery(env_values, setup_mode=setup_mode)
         _configure_node_bootstrap(env_values, setup_mode=setup_mode)
     _preflight_validate(env_values, role=role)
     _prepare_runtime_files(env_values, role=role)
@@ -238,6 +245,44 @@ def _ask_optional_http_urls(prompt: str, default: str) -> str:
         print("Enter at least one http:// or https:// URL or leave the field empty.")
 
 
+def _ask_host(prompt: str, default: str) -> str:
+    while True:
+        suffix = f" [{default}]" if default else ""
+        answer = input(f"{prompt}{suffix}: ").strip()
+        if not answer:
+            if default:
+                return default
+            print("Host must not be empty.")
+            continue
+        if _looks_public_host(answer):
+            return answer
+        print("Invalid public host. Use a real public DNS name or public IP address, not localhost or a private address.")
+
+
+def _ask_port(prompt: str, default: str) -> str:
+    while True:
+        answer = input(f"{prompt} [{default}]: ").strip()
+        if not answer:
+            return default
+        if answer.isdigit() and 1 <= int(answer) <= 65535:
+            return answer
+        print("Invalid port. Expected an integer between 1 and 65535.")
+
+
+def _looks_public_host(host: str) -> bool:
+    candidate = host.strip()
+    if not candidate or any(character.isspace() for character in candidate):
+        return False
+    lowered = candidate.lower()
+    if lowered == "localhost" or lowered.endswith(".local"):
+        return False
+    try:
+        address = ipaddress.ip_address(candidate)
+    except ValueError:
+        return True
+    return address.is_global
+
+
 def _ask_optional_peer(prompt: str, default: str) -> str:
     while True:
         answer = input(f"{prompt} [{default}]: ").strip()
@@ -335,9 +380,9 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) ->
         env_values["DEFAULT_BOOTSTRAP_PEER"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
         env_values["DEFAULT_EXPLORER_URL"] = PUBLIC_DEVNET_EXPLORER_URL
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = PUBLIC_DEVNET_NODE_ENDPOINT
-        env_values["NODE_DIRECT_PEERS"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
+        env_values["NODE_DIRECT_PEERS"] = ""
         env_values["NODE_DIRECT_PEER"] = ""
-        env_values["NODE_BOOTSTRAP_URL"] = ""
+        env_values["NODE_BOOTSTRAP_URL"] = PUBLIC_DEVNET_BOOTSTRAP_URL
         env_values["MINING_NODE_URLS"] = miner_node_default
         env_values["DIRECT_PEERS"] = ""
         env_values["DIRECT_PEER"] = ""
@@ -346,19 +391,18 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) ->
 
     if setup_mode == "custom":
         node_endpoint = _ask_http_url("Enter node endpoint", PUBLIC_DEVNET_NODE_ENDPOINT)
-        bootstrap_peer = _ask_direct_peers("Enter startup peer(s)", PUBLIC_DEVNET_BOOTSTRAP_PEER)
         explorer_url = _ask_http_url("Enter explorer URL", PUBLIC_DEVNET_EXPLORER_URL)
         mining_node_urls = _ask_http_url(
             "Enter miner node endpoint",
             node_endpoint if role == "miner" else "http://node:8081",
         )
         env_values["DEFAULT_NODE_ENDPOINT"] = node_endpoint
-        env_values["DEFAULT_BOOTSTRAP_PEER"] = bootstrap_peer.split(",", 1)[0]
+        env_values["DEFAULT_BOOTSTRAP_PEER"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
         env_values["DEFAULT_EXPLORER_URL"] = explorer_url
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = node_endpoint
-        env_values["NODE_DIRECT_PEERS"] = bootstrap_peer
+        env_values["NODE_DIRECT_PEERS"] = ""
         env_values["NODE_DIRECT_PEER"] = ""
-        env_values["NODE_BOOTSTRAP_URL"] = ""
+        env_values["NODE_BOOTSTRAP_URL"] = PUBLIC_DEVNET_BOOTSTRAP_URL
         env_values["MINING_NODE_URLS"] = mining_node_urls
         env_values["DIRECT_PEERS"] = ""
         env_values["DIRECT_PEER"] = ""
@@ -376,6 +420,60 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) ->
     env_values["DIRECT_PEERS"] = ""
     env_values["DIRECT_PEER"] = ""
     env_values["BOOTSTRAP_URL"] = ""
+
+
+def _configure_node_discovery(env_values: dict[str, str], *, setup_mode: str) -> None:
+    """Prompt for node peer discovery and optional bootstrap announce settings."""
+
+    default_discovery = "isolated" if setup_mode == "local" else "bootstrap"
+    discovery_mode = _ask_choice(
+        "How should the node find its first peers?",
+        {
+            "bootstrap": "Bootstrap seed service",
+            "manual": "Manual startup peer list",
+            "isolated": "Start isolated",
+        },
+        default_discovery,
+    )
+
+    env_values["NODE_DIRECT_PEERS"] = ""
+    env_values["NODE_DIRECT_PEER"] = ""
+    env_values["NODE_BOOTSTRAP_URL"] = ""
+
+    if discovery_mode == "bootstrap":
+        env_values["NODE_BOOTSTRAP_URL"] = _ask_http_url(
+            "Enter bootstrap seed URL",
+            PUBLIC_DEVNET_BOOTSTRAP_URL,
+        )
+    elif discovery_mode == "manual":
+        env_values["NODE_DIRECT_PEERS"] = _ask_direct_peers(
+            "Enter startup peer(s)",
+            PUBLIC_DEVNET_BOOTSTRAP_PEER,
+        )
+
+    publicly_reachable = _ask_choice(
+        "Will this node accept inbound public P2P connections?",
+        {
+            "no": "No",
+            "yes": "Yes, announce this node to the bootstrap seed",
+        },
+        "no" if setup_mode == "local" else "no",
+    )
+
+    env_values["BOOTSTRAP_ANNOUNCE_ENABLED"] = "false"
+    env_values["NODE_PUBLIC_HOST"] = ""
+    env_values["NODE_PUBLIC_P2P_PORT"] = env_values.get("NODE_P2P_BIND_PORT", "18444")
+
+    if publicly_reachable == "yes":
+        env_values["BOOTSTRAP_ANNOUNCE_ENABLED"] = "true"
+        env_values["NODE_PUBLIC_HOST"] = _ask_host(
+            "Enter the public P2P host for this node",
+            env_values.get("NODE_PUBLIC_HOST", ""),
+        )
+        env_values["NODE_PUBLIC_P2P_PORT"] = _ask_port(
+            "Enter the public P2P port for this node",
+            env_values.get("NODE_P2P_BIND_PORT", "18444"),
+        )
 
 
 def _configure_node_bootstrap(env_values: dict[str, str], *, setup_mode: str) -> None:
@@ -525,6 +623,20 @@ def _preflight_validate(env_values: dict[str, str], *, role: str) -> None:
     if role in {"node", "both"}:
         node_data_path = Path(env_values["NODE_DATA_PATH"])
         _ensure_runtime_parent(node_data_path, "Node data")
+        announce_enabled = env_values.get("BOOTSTRAP_ANNOUNCE_ENABLED", "false")
+        if announce_enabled not in {"true", "false", "1", "0"}:
+            _die("BOOTSTRAP_ANNOUNCE_ENABLED must be true or false.")
+        if announce_enabled in {"true", "1"}:
+            bootstrap_url = env_values.get("NODE_BOOTSTRAP_URL", "").strip() or env_values.get("BOOTSTRAP_URL", "").strip()
+            if not bootstrap_url:
+                _die("Bootstrap announce requires NODE_BOOTSTRAP_URL or BOOTSTRAP_URL.")
+            if not env_values.get("NODE_PUBLIC_HOST", "").strip():
+                _die("Bootstrap announce requires NODE_PUBLIC_HOST.")
+            if not _looks_public_host(env_values["NODE_PUBLIC_HOST"]):
+                _die(f"NODE_PUBLIC_HOST is not a public host: {env_values['NODE_PUBLIC_HOST']}")
+            public_port = env_values.get("NODE_PUBLIC_P2P_PORT", "").strip()
+            if not public_port.isdigit() or not (1 <= int(public_port) <= 65535):
+                _die(f"NODE_PUBLIC_P2P_PORT must be a valid TCP port: {public_port}")
         bootstrap_mode = env_values.get("NODE_BOOTSTRAP_MODE", "full")
         if bootstrap_mode not in {"full", "snapshot", "auto"}:
             _die(f"Unsupported node bootstrap mode: {bootstrap_mode}")
@@ -774,6 +886,14 @@ def _print_success(
     if role in {"node", "both"}:
         print(f"Node database: {env_values['NODE_DATA_PATH']}")
         print(f"Snapshot metadata file: {_snapshot_metadata_path(Path(env_values['NODE_DATA_PATH']))}")
+        if env_values["NODE_BOOTSTRAP_URL"]:
+            print(f"Node bootstrap seed URL: {env_values['NODE_BOOTSTRAP_URL']}")
+        else:
+            print("Node bootstrap seed URL: none")
+        print(f"Bootstrap announce enabled: {env_values.get('BOOTSTRAP_ANNOUNCE_ENABLED', 'false')}")
+        if env_values.get("BOOTSTRAP_ANNOUNCE_ENABLED") == "true":
+            print(f"Announced public host: {env_values['NODE_PUBLIC_HOST']}")
+            print(f"Announced public P2P port: {env_values['NODE_PUBLIC_P2P_PORT']}")
     print(f"Setup mode: {setup_mode}")
     print(f"Default node endpoint: {env_values['DEFAULT_NODE_ENDPOINT']}")
     if role in {"node", "both"}:

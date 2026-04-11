@@ -41,7 +41,8 @@ def test_quick_mode_same_host_defaults_node_remote_miner_local_http() -> None:
 
     wizard._apply_setup_mode(env_values, "quick", "both")
 
-    assert env_values["NODE_DIRECT_PEERS"] == "chipcoinprotocol.com:18444"
+    assert env_values["NODE_DIRECT_PEERS"] == ""
+    assert env_values["NODE_BOOTSTRAP_URL"] == "http://chipcoinprotocol.com:28080"
     assert env_values["MINING_NODE_URLS"] == "http://node:8081"
     assert env_values["DIRECT_PEERS"] == ""
     assert env_values["BOOTSTRAP_URL"] == ""
@@ -53,7 +54,8 @@ def test_quick_mode_miner_only_defaults_to_remote_peer() -> None:
 
     wizard._apply_setup_mode(env_values, "quick", "miner")
 
-    assert env_values["NODE_DIRECT_PEERS"] == "chipcoinprotocol.com:18444"
+    assert env_values["NODE_DIRECT_PEERS"] == ""
+    assert env_values["NODE_BOOTSTRAP_URL"] == "http://chipcoinprotocol.com:28080"
     assert env_values["MINING_NODE_URLS"] == "https://api.chipcoinprotocol.com"
 
 
@@ -74,7 +76,48 @@ def test_env_examples_expose_service_specific_discovery_defaults() -> None:
         content = env_path.read_text(encoding="utf-8")
         assert "NODE_DIRECT_PEERS=" in content
         assert "NODE_BOOTSTRAP_URL=" in content
+        assert "BOOTSTRAP_ANNOUNCE_ENABLED=" in content
+        assert "NODE_PUBLIC_HOST=" in content
+        assert "NODE_PUBLIC_P2P_PORT=" in content
         assert "MINING_NODE_URLS=" in content
+
+
+def test_configure_node_discovery_defaults_to_bootstrap_and_public_standard_port(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+    answers = iter([
+        "",  # bootstrap seed default
+        "",  # default bootstrap URL
+        "yes",
+        "node.example.com",
+        "",  # default public port from NODE_P2P_BIND_PORT
+    ])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    wizard._configure_node_discovery(env_values, setup_mode="quick")
+
+    assert env_values["NODE_DIRECT_PEERS"] == ""
+    assert env_values["NODE_BOOTSTRAP_URL"] == "http://chipcoinprotocol.com:28080"
+    assert env_values["BOOTSTRAP_ANNOUNCE_ENABLED"] == "true"
+    assert env_values["NODE_PUBLIC_HOST"] == "node.example.com"
+    assert env_values["NODE_PUBLIC_P2P_PORT"] == env_values["NODE_P2P_BIND_PORT"] == "18444"
+
+
+def test_configure_node_discovery_manual_mode_disables_bootstrap_url(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+    answers = iter([
+        "manual",
+        "",
+        "no",
+    ])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    wizard._configure_node_discovery(env_values, setup_mode="quick")
+
+    assert env_values["NODE_DIRECT_PEERS"] == "chipcoinprotocol.com:18444"
+    assert env_values["NODE_BOOTSTRAP_URL"] == ""
+    assert env_values["BOOTSTRAP_ANNOUNCE_ENABLED"] == "false"
 
 
 def test_prepare_runtime_files_skips_node_db_for_miner_only() -> None:
@@ -325,6 +368,25 @@ def test_preflight_rejects_invalid_manifest_url_syntax() -> None:
             assert exc.code == 1
         else:
             raise AssertionError("Expected preflight validation to fail for an invalid manifest URL.")
+
+
+def test_preflight_rejects_invalid_public_announce_host() -> None:
+    wizard = load_wizard_module()
+    with TemporaryDirectory() as tempdir:
+        temp_root = Path(tempdir)
+        env_values = dict(wizard.DEFAULTS)
+        env_values["NODE_DATA_PATH"] = str(temp_root / "node.sqlite3")
+        env_values["BOOTSTRAP_ANNOUNCE_ENABLED"] = "true"
+        env_values["NODE_BOOTSTRAP_URL"] = "http://bootstrap.example:28080"
+        env_values["NODE_PUBLIC_HOST"] = "127.0.0.1"
+        env_values["NODE_PUBLIC_P2P_PORT"] = "18444"
+
+        try:
+            wizard._preflight_validate(env_values, role="node")
+        except SystemExit as exc:
+            assert exc.code == 1
+        else:
+            raise AssertionError("Expected preflight validation to fail for a non-public announce host.")
 
 
 def test_both_role_snapshot_bootstrap_keeps_local_miner_endpoint() -> None:
