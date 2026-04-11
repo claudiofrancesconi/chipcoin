@@ -159,6 +159,9 @@ If you want a fully local first run, set:
 - `NODE_DIRECT_PEERS=`
 - `NODE_DIRECT_PEER=`
 - `NODE_BOOTSTRAP_URL=`
+- `BOOTSTRAP_ANNOUNCE_ENABLED=false`
+- `NODE_PUBLIC_HOST=`
+- `NODE_PUBLIC_P2P_PORT=`
 - `MINING_NODE_URLS=http://node:8081`
 - `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT=http://127.0.0.1:8081`
 
@@ -280,6 +283,8 @@ Service-specific discovery precedence:
 - `node` uses `NODE_DIRECT_PEERS`, `NODE_DIRECT_PEER`, and `NODE_BOOTSTRAP_URL` first
 - if those are unset, `node` falls back to `DIRECT_PEERS`, `DIRECT_PEER`, and `BOOTSTRAP_URL`
 - `miner` uses `MINING_NODE_URLS` for node failover and does not participate in P2P discovery
+- enable `BOOTSTRAP_ANNOUNCE_ENABLED=true` only on nodes that are publicly reachable at `NODE_PUBLIC_HOST:NODE_PUBLIC_P2P_PORT`
+- keep `BOOTSTRAP_REFRESH_INTERVAL_SECONDS` comfortably below the bootstrap seed TTL
 
 Recommended operator modes:
 
@@ -291,6 +296,10 @@ Recommended operator modes:
 - node-only follower host
   - set `NODE_DIRECT_PEERS=chipcoinprotocol.com:18444` or `NODE_BOOTSTRAP_URL=https://bootstrap.chipcoinprotocol.com`
   - leave miner-specific vars unused
+- public bootstrap seed contributor
+  - set `NODE_BOOTSTRAP_URL=https://bootstrap.chipcoinprotocol.com`
+  - set `BOOTSTRAP_ANNOUNCE_ENABLED=true`
+  - set `NODE_PUBLIC_HOST` and `NODE_PUBLIC_P2P_PORT` to the real public P2P endpoint
 
 Headers-first sync defaults in `.env.example`:
 

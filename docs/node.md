@@ -818,6 +818,10 @@ Basic validation:
 - `NODE_DIRECT_PEERS` is the preferred way to define one or more explicit startup peers for the node.
 - `NODE_DIRECT_PEER` remains supported for compatibility with older configs.
 - `NODE_BOOTSTRAP_URL` is the preferred bootstrap helper setting for the node.
+- `BOOTSTRAP_ANNOUNCE_ENABLED=true` makes the node announce itself to the bootstrap seed on startup and then refresh periodically.
+- `NODE_PUBLIC_HOST` and `NODE_PUBLIC_P2P_PORT` must point at the node's real public P2P endpoint when bootstrap announce is enabled.
+- `BOOTSTRAP_REFRESH_INTERVAL_SECONDS` should stay comfortably below the bootstrap seed TTL so the record does not expire.
+- Enable bootstrap announce only on nodes that really accept inbound public P2P connections.
 - If `NODE_*` discovery vars are unset, the node falls back to `DIRECT_PEERS`, `DIRECT_PEER`, and `BOOTSTRAP_URL`.
 - Leave both `NODE_*` and shared discovery vars empty for an isolated node.
 - Public browser wallet access may require `CHIPCOIN_HTTP_ALLOWED_ORIGINS` to include the wallet origin.

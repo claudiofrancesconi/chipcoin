@@ -90,6 +90,11 @@ role_discovery_value() {
   printf ''
 }
 
+is_truthy() {
+  local value="${1:-}"
+  [[ "$value" == "true" || "$value" == "1" ]]
+}
+
 configure_discovery_env_for_role() {
   local role="$1"
   case "$role" in
@@ -152,6 +157,66 @@ PY
   fi
 
   return 1
+}
+
+bootstrap_announce_once() {
+  BOOTSTRAP_URL_VALUE="${BOOTSTRAP_URL:-}" \
+  CHIPCOIN_NETWORK_VALUE="${CHIPCOIN_NETWORK:-}" \
+  NODE_PUBLIC_HOST_VALUE="${NODE_PUBLIC_HOST:-}" \
+  NODE_PUBLIC_P2P_PORT_VALUE="${NODE_PUBLIC_P2P_PORT:-}" \
+  python3 - <<'PY'
+import os
+import time
+from importlib import metadata
+
+from chipcoin.interfaces.seed_client import SeedClient
+
+client = SeedClient(os.environ["BOOTSTRAP_URL_VALUE"])
+version = metadata.version("chipcoin")
+client.announce(
+    host=os.environ["NODE_PUBLIC_HOST_VALUE"],
+    port=int(os.environ["NODE_PUBLIC_P2P_PORT_VALUE"]),
+    network=os.environ["CHIPCOIN_NETWORK_VALUE"],
+    node_id="",
+    version=version,
+    last_seen=int(time.time()),
+)
+PY
+}
+
+start_bootstrap_announce_loop() {
+  if ! is_truthy "${BOOTSTRAP_ANNOUNCE_ENABLED:-false}"; then
+    return 0
+  fi
+  if [[ -z "${BOOTSTRAP_URL:-}" ]]; then
+    warn "BOOTSTRAP_ANNOUNCE_ENABLED is set but BOOTSTRAP_URL is empty. Skipping bootstrap announce."
+    return 0
+  fi
+  if [[ -z "${NODE_PUBLIC_HOST:-}" ]]; then
+    warn "BOOTSTRAP_ANNOUNCE_ENABLED is set but NODE_PUBLIC_HOST is empty. Skipping bootstrap announce."
+    return 0
+  fi
+  if [[ -z "${NODE_PUBLIC_P2P_PORT:-}" ]]; then
+    warn "BOOTSTRAP_ANNOUNCE_ENABLED is set but NODE_PUBLIC_P2P_PORT is empty. Skipping bootstrap announce."
+    return 0
+  fi
+
+  local refresh_interval="${BOOTSTRAP_REFRESH_INTERVAL_SECONDS:-60}"
+  if ! [[ "$refresh_interval" =~ ^[0-9]+$ ]] || [[ "$refresh_interval" -le 0 ]]; then
+    warn "Invalid BOOTSTRAP_REFRESH_INTERVAL_SECONDS=${refresh_interval}. Falling back to 60 seconds."
+    refresh_interval=60
+  fi
+
+  (
+    while true; do
+      if bootstrap_announce_once; then
+        log "Bootstrap announce succeeded bootstrap_url=${BOOTSTRAP_URL} public_host=${NODE_PUBLIC_HOST} public_port=${NODE_PUBLIC_P2P_PORT}"
+      else
+        warn "Bootstrap announce failed bootstrap_url=${BOOTSTRAP_URL} public_host=${NODE_PUBLIC_HOST} public_port=${NODE_PUBLIC_P2P_PORT}"
+      fi
+      sleep "$refresh_interval"
+    done
+  ) &
 }
 
 ensure_sqlite_file() {
@@ -256,6 +321,8 @@ run_node() {
   if awk 'BEGIN { exit !('"${BLOCK_DOWNLOAD_WINDOW_SIZE:-128}"' < '"${BLOCK_MAX_INFLIGHT_PER_PEER:-16}"') }'; then
     warn "BLOCK_DOWNLOAD_WINDOW_SIZE=${BLOCK_DOWNLOAD_WINDOW_SIZE:-128} is below BLOCK_MAX_INFLIGHT_PER_PEER=${BLOCK_MAX_INFLIGHT_PER_PEER:-16}; effective throughput will be reduced."
   fi
+
+  start_bootstrap_announce_loop
 
   exec chipcoin \
     --network "${CHIPCOIN_NETWORK}" \
