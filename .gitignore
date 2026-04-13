@@ -17,6 +17,7 @@ wallets/
 logs/
 docker-compose.override.yml
 docker-compose.local.yml
+send_chc_from_miner.sh
 src/*.egg-info/
 src/chipcoin_v2.egg-info/
 
