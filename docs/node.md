@@ -209,6 +209,8 @@ Default local URL:
 Useful endpoints:
 
 - `GET /v1/status`
+- `GET /v1/rewards/node-status?node_id=<id>&epoch_index=<optional>`
+- `GET /v1/rewards/epoch-summary?epoch_index=<required>`
 - `GET /v1/peers`
 - `GET /v1/blocks`
 - `GET /v1/block?height=<height>`

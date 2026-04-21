@@ -12,12 +12,12 @@ import struct
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from ..consensus.models import BlockHeader, OutPoint, TxOutput
+from ..consensus.models import Block, BlockHeader, OutPoint, TxOutput
 from ..consensus.epoch_settlement import parse_reward_attestation_bundle_metadata, parse_reward_settlement_metadata
 from ..consensus.nodes import NodeRecord
 from ..consensus.params import ConsensusParams
 from ..consensus.pow import calculate_next_work_required, header_work, verify_proof_of_work
-from ..consensus.serialization import deserialize_block_header, serialize_block_header
+from ..consensus.serialization import deserialize_block, deserialize_block_header, serialize_block, serialize_block_header
 from ..consensus.utxo import UtxoEntry
 from ..storage.native_rewards import StoredEpochSettlement, StoredRewardAttestationBundle
 
@@ -55,6 +55,7 @@ class LoadedSnapshot:
 
     metadata: dict[str, object]
     headers: tuple[SnapshotHeaderRecord, ...]
+    blocks: tuple[Block, ...]
     utxos: tuple[tuple[OutPoint, UtxoEntry], ...]
     node_registry_records: tuple[NodeRecord, ...]
     reward_attestation_bundles: tuple[StoredRewardAttestationBundle, ...] = ()
@@ -91,6 +92,7 @@ def _snapshot_body(payload: dict[str, object]) -> dict[str, object]:
 
     return {
         "headers": payload.get("headers", []),
+        "blocks": payload.get("blocks", []),
         "utxos": payload.get("utxos", []),
         "node_registry": payload.get("node_registry", []),
         "reward_attestation_bundles": payload.get("reward_attestation_bundles", []),
@@ -359,6 +361,24 @@ def decode_snapshot_payload(
             )
         )
 
+    raw_blocks = payload.get("blocks", [])
+    if not isinstance(raw_blocks, list):
+        raise ValueError("snapshot blocks must be a list")
+    blocks: list[Block] = []
+    for index, raw_block in enumerate(raw_blocks):
+        if not isinstance(raw_block, dict):
+            raise ValueError("snapshot block record must be an object")
+        raw_hex = raw_block.get("raw_hex")
+        if not isinstance(raw_hex, str):
+            raise ValueError("snapshot block raw_hex is required")
+        block, offset = deserialize_block(bytes.fromhex(raw_hex))
+        if offset != len(bytes.fromhex(raw_hex)):
+            raise ValueError("snapshot block contains trailing bytes")
+        expected_header = headers[index].header
+        if block.header != expected_header:
+            raise ValueError("snapshot block does not match embedded main-chain header")
+        blocks.append(block)
+
     raw_registry = payload.get("node_registry")
     if not isinstance(raw_registry, list):
         raise ValueError("snapshot node_registry must be a list")
@@ -420,6 +440,7 @@ def decode_snapshot_payload(
                 "epoch_end_height": str(raw_settlement["epoch_end_height"]),
                 "epoch_seed": str(raw_settlement["epoch_seed_hex"]),
                 "policy_version": str(raw_settlement["policy_version"]),
+                "submission_mode": str(raw_settlement.get("submission_mode", "manual")),
                 "candidate_summary_root": str(raw_settlement["candidate_summary_root"]),
                 "verified_nodes_root": str(raw_settlement["verified_nodes_root"]),
                 "rewarded_nodes_root": str(raw_settlement["rewarded_nodes_root"]),
@@ -440,6 +461,7 @@ def decode_snapshot_payload(
     return LoadedSnapshot(
         metadata=dict(metadata),
         headers=tuple(headers),
+        blocks=tuple(blocks),
         utxos=tuple(utxos),
         node_registry_records=tuple(node_registry_records),
         reward_attestation_bundles=tuple(reward_attestation_bundles),
@@ -457,6 +479,7 @@ def build_snapshot_payload(
     params: ConsensusParams,
     created_at: int,
     headers: tuple[SnapshotHeaderRecord, ...],
+    blocks: tuple[Block, ...],
     utxos: tuple[tuple[OutPoint, UtxoEntry], ...],
     node_registry_records: tuple[NodeRecord, ...],
     reward_attestation_bundles: tuple[StoredRewardAttestationBundle, ...] = (),
@@ -467,6 +490,8 @@ def build_snapshot_payload(
 
     if not headers:
         raise ValueError("cannot export a snapshot without headers")
+    if len(blocks) != len(headers):
+        raise ValueError("snapshot blocks must match embedded header count")
     tip_record = headers[-1]
     payload = {
         "metadata": {
@@ -478,6 +503,7 @@ def build_snapshot_payload(
             "snapshot_block_timestamp": tip_record.header.timestamp,
             "created_at": created_at,
             "header_count": len(headers),
+            "block_count": len(blocks),
             "utxo_count": len(utxos),
             "node_registry_count": len(node_registry_records),
             "reward_attestation_bundle_count": len(reward_attestation_bundles),
@@ -507,6 +533,14 @@ def build_snapshot_payload(
                 "raw_hex": serialize_block_header(record.header).hex(),
             }
             for record in headers
+        ],
+        "blocks": [
+            {
+                "height": index,
+                "block_hash": block.block_hash(),
+                "raw_hex": serialize_block(block).hex(),
+            }
+            for index, block in enumerate(blocks)
         ],
         "utxos": [
             {
@@ -567,6 +601,7 @@ def build_snapshot_payload(
                 "epoch_end_height": stored.settlement.epoch_end_height,
                 "epoch_seed_hex": stored.settlement.epoch_seed_hex,
                 "policy_version": stored.settlement.policy_version,
+                "submission_mode": stored.settlement.submission_mode,
                 "candidate_summary_root": stored.settlement.candidate_summary_root,
                 "verified_nodes_root": stored.settlement.verified_nodes_root,
                 "rewarded_nodes_root": stored.settlement.rewarded_nodes_root,

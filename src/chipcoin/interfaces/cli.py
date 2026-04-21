@@ -572,6 +572,16 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(service.native_reward_assignments(epoch_index=args.epoch_index, node_id=args.node_id))
             return 0
 
+        if args.command == "reward-node-status":
+            assert service is not None
+            _print_json(service.reward_node_status(node_id=args.node_id, epoch_index=args.epoch_index))
+            return 0
+
+        if args.command == "reward-epoch-summary":
+            assert service is not None
+            _print_json(service.reward_epoch_summary(epoch_index=args.epoch_index))
+            return 0
+
         if args.command == "reward-attestations":
             assert service is not None
             _print_json(service.native_reward_attestation_diagnostics(epoch_index=args.epoch_index))
@@ -850,6 +860,11 @@ def _build_parser() -> argparse.ArgumentParser:
     reward_assignments = subparsers.add_parser("reward-assignments")
     reward_assignments.add_argument("--epoch-index", type=int)
     reward_assignments.add_argument("--node-id")
+    reward_node_status = subparsers.add_parser("reward-node-status")
+    reward_node_status.add_argument("--node-id", required=True)
+    reward_node_status.add_argument("--epoch-index", type=int)
+    reward_epoch_summary = subparsers.add_parser("reward-epoch-summary")
+    reward_epoch_summary.add_argument("--epoch-index", required=True, type=int)
     reward_attestations = subparsers.add_parser("reward-attestations")
     reward_attestations.add_argument("--epoch-index", type=int)
     reward_settlements = subparsers.add_parser("reward-settlements")

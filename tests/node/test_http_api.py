@@ -7,9 +7,11 @@ from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from chipcoin.consensus.epoch_settlement import RewardAttestation
 from chipcoin.consensus.merkle import merkle_root
-from chipcoin.consensus.models import Block, OutPoint
+from chipcoin.consensus.models import Block, OutPoint, Transaction
 from chipcoin.consensus.params import MAINNET_PARAMS
+from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import deserialize_transaction, serialize_block, serialize_transaction
 from chipcoin.interfaces.cli import main as cli_main
@@ -221,6 +223,282 @@ def test_http_api_exposes_native_reward_epoch_routes() -> None:
         assert report_status == "200 OK"
         assert report_body["rewarded_node_count"] == 0
         assert report_body["settlement_accounting_summary"]["distributed_node_reward_chipbits"] == 0
+
+
+def test_http_api_reward_node_status_reports_active_stale_and_warming_up() -> None:
+    with TemporaryDirectory() as tempdir:
+        params = replace(
+            MAINNET_PARAMS,
+            node_reward_activation_height=0,
+            epoch_length_blocks=5,
+            reward_node_warmup_epochs=2,
+            reward_check_windows_per_epoch=4,
+            reward_target_checks_per_epoch=1,
+            reward_min_passed_checks_per_epoch=1,
+            reward_verifier_committee_size=1,
+            reward_verifier_quorum=1,
+            reward_final_confirmation_window_blocks=1,
+            max_rewarded_nodes_per_epoch=4,
+        )
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(
+            Path(tempdir) / "chipcoin.sqlite3",
+            params=params,
+            time_provider=lambda: next(timestamps),
+        )
+        app = HttpApiApp(service)
+        service.node_registry.upsert(
+            NodeRecord(
+                node_id="reward-node-a",
+                payout_address=wallet_key(0).address,
+                owner_pubkey=wallet_key(0).public_key,
+                registered_height=0,
+                last_renewed_height=10,
+                node_pubkey=wallet_key(0).public_key,
+                declared_host="node-a.example",
+                declared_port=19001,
+                reward_registration=True,
+            )
+        )
+        service.node_registry.upsert(
+            NodeRecord(
+                node_id="reward-node-b",
+                payout_address=wallet_key(1).address,
+                owner_pubkey=wallet_key(1).public_key,
+                registered_height=0,
+                last_renewed_height=0,
+                node_pubkey=wallet_key(1).public_key,
+                declared_host="node-b.example",
+                declared_port=19002,
+                reward_registration=True,
+            )
+        )
+        service.node_registry.upsert(
+            NodeRecord(
+                node_id="reward-node-c",
+                payout_address=wallet_key(2).address,
+                owner_pubkey=wallet_key(2).public_key,
+                registered_height=6,
+                last_renewed_height=10,
+                node_pubkey=wallet_key(2).public_key,
+                declared_host="node-c.example",
+                declared_port=19003,
+                reward_registration=True,
+            )
+        )
+        for _ in range(11):
+            service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+
+        active_status, _, active_body = _call_wsgi(
+            app, method="GET", path="/v1/rewards/node-status", query="node_id=reward-node-a"
+        )
+        stale_status, _, stale_body = _call_wsgi(
+            app, method="GET", path="/v1/rewards/node-status", query="node_id=reward-node-b&epoch_index=2"
+        )
+        warming_status, _, warming_body = _call_wsgi(
+            app, method="GET", path="/v1/rewards/node-status", query="node_id=reward-node-c&epoch_index=2"
+        )
+
+        assert active_status == "200 OK"
+        assert active_body["eligibility_reason"] == "active_from_height_11"
+        assert active_body["selected_epoch_assigned"] is True
+        assert active_body["selected_epoch_assignment"]["node_id"] == "reward-node-a"
+        assert active_body["reward_state_anchor"]
+
+        assert stale_status == "200 OK"
+        assert stale_body["eligibility_reason"] == "missed_renewal_for_epoch_2"
+        assert stale_body["selected_epoch_exclusion_reason"] == "no_assignment_because_stale_missed_renewal_for_epoch_2"
+        assert stale_body["reward_state_anchor"]
+
+        assert warming_status == "200 OK"
+        assert warming_body["eligibility_reason"] == "warming_up_until_height_15"
+        assert warming_body["selected_epoch_exclusion_reason"] == "no_assignment_because_warming_up_until_height_15"
+        assert warming_body["reward_state_anchor"]
+
+
+def test_http_api_reward_node_status_errors_for_missing_and_unknown_node_id() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        app = HttpApiApp(service)
+
+        missing_status, _, missing_body = _call_wsgi(app, method="GET", path="/v1/rewards/node-status")
+        unknown_status, _, unknown_body = _call_wsgi(
+            app, method="GET", path="/v1/rewards/node-status", query="node_id=unknown-node"
+        )
+
+        assert missing_status == "400 Bad Request"
+        assert missing_body["error"]["code"] == "invalid_request"
+        assert missing_body["error"]["message"] == "node_id is required"
+        assert unknown_status == "404 Not Found"
+        assert unknown_body["error"]["code"] == "not_found"
+        assert unknown_body["error"]["message"] == "Node id is not registered."
+
+
+def test_http_api_reward_epoch_summary_reports_open_epoch_and_required_fields() -> None:
+    with TemporaryDirectory() as tempdir:
+        params = replace(
+            MAINNET_PARAMS,
+            node_reward_activation_height=0,
+            epoch_length_blocks=5,
+            reward_node_warmup_epochs=0,
+            reward_check_windows_per_epoch=4,
+            reward_target_checks_per_epoch=1,
+            reward_min_passed_checks_per_epoch=1,
+            reward_verifier_committee_size=1,
+            reward_verifier_quorum=1,
+            reward_final_confirmation_window_blocks=1,
+            max_rewarded_nodes_per_epoch=4,
+        )
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(
+            Path(tempdir) / "chipcoin.sqlite3",
+            params=params,
+            time_provider=lambda: next(timestamps),
+        )
+        app = HttpApiApp(service)
+        service.node_registry.upsert(
+            NodeRecord(
+                node_id="reward-node-a",
+                payout_address=wallet_key(0).address,
+                owner_pubkey=wallet_key(0).public_key,
+                registered_height=0,
+                last_renewed_height=10,
+                node_pubkey=wallet_key(0).public_key,
+                declared_host="node-a.example",
+                declared_port=19001,
+                reward_registration=True,
+            )
+        )
+        for _ in range(11):
+            service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+
+        status, _, body = _call_wsgi(app, method="GET", path="/v1/rewards/epoch-summary", query="epoch_index=2")
+
+        assert status == "200 OK"
+        assert body["active_reward_node_count"] == 1
+        assert body["active_reward_node_ids"] == ["reward-node-a"]
+        assert body["settlement_status"] == "open"
+        assert body["settlement_reason"] == "no_settlement_because_epoch_open"
+        assert body["reward_state_anchor"]
+
+
+def test_http_api_reward_epoch_summary_reports_closed_epoch_with_payouts() -> None:
+    with TemporaryDirectory() as tempdir:
+        params = replace(
+            MAINNET_PARAMS,
+            node_reward_activation_height=0,
+            epoch_length_blocks=5,
+            reward_node_warmup_epochs=0,
+            reward_check_windows_per_epoch=4,
+            reward_target_checks_per_epoch=1,
+            reward_min_passed_checks_per_epoch=1,
+            reward_verifier_committee_size=1,
+            reward_verifier_quorum=1,
+            reward_final_confirmation_window_blocks=1,
+            max_rewarded_nodes_per_epoch=4,
+        )
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(
+            Path(tempdir) / "chipcoin.sqlite3",
+            params=params,
+            time_provider=lambda: next(timestamps),
+        )
+        app = HttpApiApp(service)
+
+        reward_a = wallet_key(0)
+        reward_b = wallet_key(1)
+        for node_id, wallet, port in (
+            ("reward-node-a", reward_a, 19001),
+            ("reward-node-b", reward_b, 19002),
+        ):
+            service.receive_transaction(
+                TransactionSigner(wallet).build_register_reward_node_transaction(
+                    node_id=node_id,
+                    payout_address=wallet.address,
+                    node_public_key_hex=wallet.public_key.hex(),
+                    declared_host="127.0.0.1",
+                    declared_port=port,
+                    registration_fee_chipbits=service.params.register_node_fee_chipbits,
+                )
+            )
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+        assignment = service.native_reward_assignments(epoch_index=0, node_id="reward-node-a")[0]
+        window_index = assignment["candidate_check_windows"][0]
+        verifier_node_id = assignment["verifier_committees"][str(window_index)][0]
+        attestation = TransactionSigner(reward_b).sign_reward_attestation(
+            RewardAttestation(
+                epoch_index=0,
+                check_window_index=window_index,
+                candidate_node_id="reward-node-a",
+                verifier_node_id=verifier_node_id,
+                result_code="pass",
+                observed_sync_gap=0,
+                endpoint_commitment="127.0.0.1:19001",
+                concentration_key="demo:reward-node-a",
+                signature_hex="",
+            )
+        )
+        service.receive_transaction(
+            Transaction(
+                version=1,
+                inputs=(),
+                outputs=(),
+                metadata={
+                    "kind": "reward_attestation_bundle",
+                    "epoch_index": "0",
+                    "bundle_window_index": str(window_index),
+                    "bundle_submitter_node_id": verifier_node_id,
+                    "attestation_count": "1",
+                    "attestations_json": json.dumps(
+                        [
+                            {
+                                "epoch_index": attestation.epoch_index,
+                                "check_window_index": attestation.check_window_index,
+                                "candidate_node_id": attestation.candidate_node_id,
+                                "verifier_node_id": attestation.verifier_node_id,
+                                "result_code": attestation.result_code,
+                                "observed_sync_gap": attestation.observed_sync_gap,
+                                "endpoint_commitment": attestation.endpoint_commitment,
+                                "concentration_key": attestation.concentration_key,
+                                "signature_hex": attestation.signature_hex,
+                            }
+                        ],
+                        sort_keys=True,
+                    ),
+                },
+            )
+        )
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+        while service.chain_tip() is not None and service.chain_tip().height < 4:
+            service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+
+        status, _, body = _call_wsgi(app, method="GET", path="/v1/rewards/epoch-summary", query="epoch_index=0")
+
+        assert status == "200 OK"
+        assert body["settlement_status"] == "closed"
+        assert body["settlement_reason"] == "settlement_stored"
+        assert body["settlement_exists"] is True
+        assert body["rewarded_node_ids"] == ["reward-node-a"]
+        assert body["payout_totals"]["distributed_node_reward_chipbits"] > 0
+        assert body["reward_state_anchor"]
+
+
+def test_http_api_reward_epoch_summary_errors_for_missing_or_invalid_epoch_index() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        app = HttpApiApp(service)
+
+        missing_status, _, missing_body = _call_wsgi(app, method="GET", path="/v1/rewards/epoch-summary")
+        invalid_status, _, invalid_body = _call_wsgi(
+            app, method="GET", path="/v1/rewards/epoch-summary", query="epoch_index=-1"
+        )
+
+        assert missing_status == "400 Bad Request"
+        assert missing_body["error"]["code"] == "invalid_request"
+        assert missing_body["error"]["message"] == "epoch_index is required"
+        assert invalid_status == "400 Bad Request"
+        assert invalid_body["error"]["code"] == "invalid_request"
+        assert "epoch_index must be >= 0" in invalid_body["error"]["message"]
 
 
 def test_http_api_submit_block_accepts_solved_template_and_rejects_stale() -> None:

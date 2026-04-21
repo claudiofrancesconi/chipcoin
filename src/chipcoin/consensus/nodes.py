@@ -135,6 +135,49 @@ def current_epoch(height: int, params: ConsensusParams) -> int:
     return height // params.epoch_length_blocks
 
 
+def reward_node_warmup_complete_epoch(record: NodeRecord, params: ConsensusParams) -> int:
+    """Return the first epoch index where reward warmup is satisfied."""
+
+    if not record.reward_registration:
+        return current_epoch(record.registered_height, params)
+    return current_epoch(record.registered_height, params) + params.reward_node_warmup_epochs
+
+
+def reward_node_warmup_complete_height(record: NodeRecord, params: ConsensusParams) -> int:
+    """Return the first block height where reward warmup is satisfied."""
+
+    return reward_node_warmup_complete_epoch(record, params) * params.epoch_length_blocks
+
+
+def reward_node_eligible_from_height(record: NodeRecord, params: ConsensusParams) -> int:
+    """Return the earliest possible block height where the current record can be active."""
+
+    renewal_ready_height = record.last_renewed_height + 1
+    if not record.reward_registration:
+        return renewal_ready_height
+    return max(renewal_ready_height, reward_node_warmup_complete_height(record, params))
+
+
+def reward_node_warmup_satisfied(record: NodeRecord, *, height: int, params: ConsensusParams) -> bool:
+    """Return whether reward-node warmup is satisfied at the supplied height."""
+
+    if not record.reward_registration:
+        return True
+    return current_epoch(height, params) >= reward_node_warmup_complete_epoch(record, params)
+
+
+def reward_node_is_active(record: NodeRecord, *, height: int, params: ConsensusParams) -> bool:
+    """Return whether one node record is active for reward selection at a given height."""
+
+    epoch = current_epoch(height, params)
+    renewal_epoch = current_epoch(record.last_renewed_height, params)
+    if record.last_renewed_height >= height:
+        return False
+    if renewal_epoch != epoch:
+        return False
+    return reward_node_warmup_satisfied(record, height=height, params=params)
+
+
 def active_node_records(
     registry_view: NodeRegistryView,
     *,
@@ -143,11 +186,10 @@ def active_node_records(
 ) -> list[NodeRecord]:
     """Return node records active for reward selection at the supplied height."""
 
-    epoch = current_epoch(height, params)
     return [
         record
         for record in registry_view.list_records()
-        if record.last_renewed_height < height and current_epoch(record.last_renewed_height, params) == epoch
+        if reward_node_is_active(record, height=height, params=params)
     ]
 
 

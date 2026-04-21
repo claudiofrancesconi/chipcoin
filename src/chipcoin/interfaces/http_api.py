@@ -123,6 +123,20 @@ class HttpApiApp:
                 "assignments": self.service.native_reward_assignments(epoch_index=epoch_index, node_id=node_id),
             }
 
+        if method == "GET" and path == "/v1/rewards/node-status":
+            query = parse_qs(environ.get("QUERY_STRING", ""))
+            node_id = self._parse_required_text(query, "node_id")
+            epoch_index = self._parse_optional_int(query, "epoch_index", minimum=0)
+            try:
+                return {"api_version": self.API_VERSION, **self.service.reward_node_status(node_id=node_id, epoch_index=epoch_index)}
+            except ValueError as exc:
+                raise ApiError(404, "not_found", str(exc)) from exc
+
+        if method == "GET" and path == "/v1/rewards/epoch-summary":
+            query = parse_qs(environ.get("QUERY_STRING", ""))
+            epoch_index = self._parse_required_int(query, "epoch_index", minimum=0)
+            return {"api_version": self.API_VERSION, **self.service.reward_epoch_summary(epoch_index=epoch_index)}
+
         if method == "GET" and path == "/v1/rewards/attestations":
             query = parse_qs(environ.get("QUERY_STRING", ""))
             epoch_index = self._parse_optional_int(query, "epoch_index")
@@ -216,6 +230,12 @@ class HttpApiApp:
             return None
         value = values[-1].strip()
         return None if not value else value
+
+    def _parse_required_text(self, query: dict[str, list[str]], name: str) -> str:
+        value = self._require_single(query, name).strip()
+        if not value:
+            raise ApiError(400, "invalid_request", f"{name} is required")
+        return value
 
     def _handle_block(self, environ) -> dict[str, object]:
         query = parse_qs(environ.get("QUERY_STRING", ""))

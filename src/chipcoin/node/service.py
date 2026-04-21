@@ -29,6 +29,12 @@ from ..consensus.nodes import (
     active_node_records,
     apply_special_node_transaction,
     is_special_node_transaction,
+    current_epoch,
+    reward_node_eligible_from_height,
+    reward_node_is_active,
+    reward_node_warmup_complete_epoch,
+    reward_node_warmup_complete_height,
+    reward_node_warmup_satisfied,
     select_rewarded_nodes,
 )
 from ..consensus.params import ConsensusParams
@@ -246,6 +252,7 @@ class NodeService:
         if tip is None:
             raise ValueError("cannot export a snapshot from an empty chain")
         headers: list[SnapshotHeaderRecord] = []
+        blocks: list[Block] = []
         for height in range(tip.height + 1):
             block_hash = self.headers.get_hash_at_height(height)
             if block_hash is None:
@@ -253,6 +260,9 @@ class NodeService:
             record = self.headers.get_record(block_hash)
             if record is None or record.cumulative_work is None:
                 raise ValueError(f"missing main-chain header metadata at height {height}")
+            block = self.blocks.get(block_hash)
+            if block is None:
+                raise ValueError(f"missing main-chain block at height {height}")
             headers.append(
                 SnapshotHeaderRecord(
                     header=record.header,
@@ -260,11 +270,13 @@ class NodeService:
                     cumulative_work=record.cumulative_work,
                 )
             )
+            blocks.append(block)
         return build_snapshot_payload(
             network=self.network,
             params=self.params,
             created_at=self.time_provider(),
             headers=tuple(headers),
+            blocks=tuple(blocks),
             utxos=tuple(self.chainstate.list_utxos()),
             node_registry_records=tuple(self.node_registry.list_records()),
             reward_attestation_bundles=tuple(self.reward_attestations.list_bundles()),
@@ -333,6 +345,8 @@ class NodeService:
                 cumulative_work=record.cumulative_work,
                 is_main_chain=True,
             )
+        for block in snapshot.blocks:
+            self.blocks.put(block)
         self.headers.set_tip(snapshot.anchor.block_hash, snapshot.anchor.height)
         self.chainstate.replace_all(list(snapshot.utxos))
         self.node_registry.replace_all(list(snapshot.node_registry_records))
@@ -1582,6 +1596,25 @@ class NodeService:
         rows = []
         for record in self.node_registry.list_records():
             renewal_epoch = record.last_renewed_height // self.params.epoch_length_blocks
+            warmup_complete_epoch = reward_node_warmup_complete_epoch(record, self.params)
+            warmup_complete_height = reward_node_warmup_complete_height(record, self.params)
+            warmup_complete = reward_node_warmup_satisfied(record, height=next_height, params=self.params)
+            active = reward_node_is_active(record, height=next_height, params=self.params)
+            if active:
+                eligibility_status = "active"
+            elif renewal_epoch != current_epoch:
+                eligibility_status = "stale"
+            elif record.last_renewed_height >= next_height:
+                eligibility_status = "pending_activation"
+            elif not warmup_complete:
+                eligibility_status = "warming_up"
+            else:
+                eligibility_status = "inactive"
+            eligibility_reason = self._reward_node_eligibility_reason(
+                record,
+                evaluation_height=next_height,
+                selected_epoch=current_epoch,
+            )
             rows.append(
                 {
                     "node_id": record.node_id,
@@ -1594,8 +1627,13 @@ class NodeService:
                     "registered_at_height": record.registered_height,
                     "last_renewal_height": record.last_renewed_height,
                     "last_renewal_epoch": renewal_epoch,
-                    "active": record.last_renewed_height < next_height and renewal_epoch == current_epoch,
-                    "eligible_from_height": record.last_renewed_height + 1,
+                    "active": active,
+                    "eligible_from_height": reward_node_eligible_from_height(record, self.params),
+                    "warmup_complete": warmup_complete,
+                    "warmup_complete_epoch": warmup_complete_epoch,
+                    "warmup_complete_height": warmup_complete_height,
+                    "eligibility_status": eligibility_status,
+                    "eligibility_reason": eligibility_reason,
                     "epoch_status": "current" if renewal_epoch == current_epoch else "stale",
                     "current_epoch": current_epoch,
                 }
@@ -1674,13 +1712,16 @@ class NodeService:
 
         rows = []
         for stored in self.reward_attestations.list_bundles(epoch_index=epoch_index):
+            block_hash = self.headers.get_hash_at_height(stored.block_height)
             rows.append(
                 {
                     "txid": stored.txid,
                     "block_height": stored.block_height,
+                    "bundle_block_hash": block_hash,
                     "epoch_index": stored.bundle.epoch_index,
                     "bundle_window_index": stored.bundle.bundle_window_index,
                     "bundle_submitter_node_id": stored.bundle.bundle_submitter_node_id,
+                    "reward_state_anchor": self._native_reward_state_anchor(epoch_index=stored.bundle.epoch_index),
                     "attestation_count": len(stored.bundle.attestations),
                     "attestations": [
                         {
@@ -1706,10 +1747,12 @@ class NodeService:
         rows = []
         for stored in self.reward_settlements.list_settlements(epoch_index=epoch_index):
             settlement = stored.settlement
+            block_hash = self.headers.get_hash_at_height(stored.block_height)
             rows.append(
                 {
                     "txid": stored.txid,
                     "block_height": stored.block_height,
+                    "settlement_block_hash": block_hash,
                     "epoch_index": settlement.epoch_index,
                     "epoch_start_height": settlement.epoch_start_height,
                     "epoch_end_height": settlement.epoch_end_height,
@@ -1722,6 +1765,10 @@ class NodeService:
                     "rewarded_node_count": settlement.rewarded_node_count,
                     "distributed_node_reward_chipbits": settlement.distributed_node_reward_chipbits,
                     "undistributed_node_reward_chipbits": settlement.undistributed_node_reward_chipbits,
+                    "reward_state_anchor": self._native_reward_state_anchor(
+                        epoch_index=settlement.epoch_index,
+                        settlement_block_height=stored.block_height,
+                    ),
                     "reward_entries": [
                         {
                             "node_id": entry.node_id,
@@ -1741,6 +1788,26 @@ class NodeService:
         """Return one deterministic prototype settlement preview for an epoch."""
 
         settlement = self.build_native_reward_settlement(epoch_index=epoch_index, submission_mode="preview")
+        reward_count = settlement.rewarded_node_count
+        distributed_reward = settlement.distributed_node_reward_chipbits
+        split_summary = {
+            "rewarded_node_count": reward_count,
+            "scheduled_node_reward_chipbits": distributed_reward + settlement.undistributed_node_reward_chipbits,
+            "distributed_node_reward_chipbits": distributed_reward,
+            "undistributed_node_reward_chipbits": settlement.undistributed_node_reward_chipbits,
+            "base_reward_chipbits": 0 if reward_count == 0 else distributed_reward // reward_count,
+            "remainder_chipbits": 0 if reward_count == 0 else distributed_reward % reward_count,
+            "ordered_rewarded_node_ids": [entry.node_id for entry in settlement.reward_entries],
+            "ordered_payouts": [
+                {
+                    "selection_rank": entry.selection_rank,
+                    "node_id": entry.node_id,
+                    "payout_address": entry.payout_address,
+                    "reward_chipbits": entry.reward_chipbits,
+                }
+                for entry in settlement.reward_entries
+            ],
+        }
         return {
             "epoch_index": settlement.epoch_index,
             "epoch_start_height": settlement.epoch_start_height,
@@ -1765,7 +1832,31 @@ class NodeService:
                 }
                 for entry in settlement.reward_entries
             ],
+            "reward_split_summary": split_summary,
             "eligible_reason": "deterministic_attestation_quorum",
+        }
+
+    def _native_reward_state_anchor(
+        self,
+        *,
+        epoch_index: int,
+        settlement_block_height: int | None = None,
+    ) -> dict[str, object]:
+        """Return active-chain anchor metadata for reward-state diagnostics."""
+
+        tip = self.chain_tip()
+        previous_close_height = None if epoch_index == 0 else epoch_close_height(epoch_index - 1, self.params)
+        previous_close_hash = "00" * 32 if epoch_index == 0 else self.headers.get_hash_at_height(previous_close_height)
+        settlement_block_hash = None
+        if settlement_block_height is not None:
+            settlement_block_hash = self.headers.get_hash_at_height(settlement_block_height)
+        return {
+            "tip_height": -1 if tip is None else tip.height,
+            "tip_hash": None if tip is None else tip.block_hash,
+            "previous_epoch_close_height": previous_close_height,
+            "previous_epoch_close_hash": previous_close_hash,
+            "settlement_block_height": settlement_block_height,
+            "settlement_block_hash": settlement_block_hash,
         }
 
     def native_reward_settlement_report(self, *, epoch_index: int | None = None) -> dict[str, object]:
@@ -1807,6 +1898,31 @@ class NodeService:
             distributed_reward_chipbits=scheduled_pool,
             params=self.params,
         )
+        stored_settlements = self.reward_settlements.list_settlements(epoch_index=resolved_epoch)
+        latest_stored_settlement = None if not stored_settlements else stored_settlements[-1]
+        reward_count = settlement.rewarded_node_count
+        split_summary = {
+            "rewarded_node_count": reward_count,
+            "scheduled_node_reward_chipbits": scheduled_pool,
+            "distributed_node_reward_chipbits": settlement.distributed_node_reward_chipbits,
+            "undistributed_node_reward_chipbits": settlement.undistributed_node_reward_chipbits,
+            "base_reward_chipbits": 0
+            if reward_count == 0
+            else settlement.distributed_node_reward_chipbits // reward_count,
+            "remainder_chipbits": 0
+            if reward_count == 0
+            else settlement.distributed_node_reward_chipbits % reward_count,
+            "ordered_rewarded_node_ids": [entry.node_id for entry in settlement.reward_entries],
+            "ordered_payouts": [
+                {
+                    "selection_rank": entry.selection_rank,
+                    "node_id": entry.node_id,
+                    "payout_address": entry.payout_address,
+                    "reward_chipbits": entry.reward_chipbits,
+                }
+                for entry in settlement.reward_entries
+            ],
+        }
         return {
             "epoch_index": settlement.epoch_index,
             "epoch_start_height": settlement.epoch_start_height,
@@ -1836,6 +1952,11 @@ class NodeService:
                 "distributed_node_reward_chipbits": settlement.distributed_node_reward_chipbits,
                 "undistributed_node_reward_chipbits": settlement.undistributed_node_reward_chipbits,
             },
+            "reward_state_anchor": self._native_reward_state_anchor(
+                epoch_index=resolved_epoch,
+                settlement_block_height=None if latest_stored_settlement is None else latest_stored_settlement.block_height,
+            ),
+            "reward_split_summary": split_summary,
         }
 
     def native_reward_epoch_state(self, *, epoch_index: int | None = None, node_id: str | None = None) -> dict[str, object]:
@@ -1860,7 +1981,7 @@ class NodeService:
                 "declared_port": record.declared_port,
                 "registered_at_height": record.registered_height,
                 "last_renewed_height": record.last_renewed_height,
-                "eligible_from_height": record.last_renewed_height + 1,
+                "eligible_from_height": reward_node_eligible_from_height(record, self.params),
             }
             for record in sorted(active_records, key=lambda item: item.node_id)
         ]
@@ -1906,9 +2027,14 @@ class NodeService:
                 "undistributed_node_reward_chipbits": settlement_preview["undistributed_node_reward_chipbits"],
                 "reward_entries": settlement_preview["reward_entries"],
                 "rewarded_nodes_root": settlement_preview["rewarded_nodes_root"],
+                "reward_split_summary": settlement_preview["reward_split_summary"],
             },
             "stored_settlement_count": len(settlements),
             "latest_stored_settlement": latest_settlement,
+            "reward_state_anchor": self._native_reward_state_anchor(
+                epoch_index=resolved_epoch,
+                settlement_block_height=None if latest_settlement is None else int(latest_settlement["block_height"]),
+            ),
             "rejection_summary": {
                 "concentration_exclusions": settlement_report["concentration_exclusions"],
                 "node_evaluations": settlement_report["node_evaluations"],
@@ -1920,6 +2046,138 @@ class NodeService:
                 "If attestations_digest differs, bundle relay or block inclusion diverged.",
                 "If settlement_preview_digest differs, settlement inputs or accounting diverged.",
             ],
+        }
+
+    def reward_node_status(self, *, node_id: str, epoch_index: int | None = None) -> dict[str, object]:
+        """Return one consolidated operator-facing reward status payload for one node."""
+
+        registry_rows = {str(row["node_id"]): row for row in self.node_registry_diagnostics()}
+        row = registry_rows.get(node_id)
+        if row is None:
+            raise ValueError("Node id is not registered.")
+        record = self.get_registered_node(node_id)
+        if record is None:
+            raise ValueError("Node id is not registered.")
+
+        tip = self.chain_tip()
+        current_height = -1 if tip is None else tip.height
+        next_height = current_height + 1
+        selected_epoch = (next_height // self.params.epoch_length_blocks) if epoch_index is None else int(epoch_index)
+        seed = self.native_reward_epoch_seed_diagnostics(selected_epoch)
+        evaluation_height = int(seed["evaluation_height"])
+        assignments = self.native_reward_assignments(epoch_index=selected_epoch, node_id=node_id)
+        epoch_state = self.native_reward_epoch_state(epoch_index=selected_epoch, node_id=node_id)
+        settlement_report = self.native_reward_settlement_report(epoch_index=selected_epoch)
+        settlements = self.native_reward_settlement_diagnostics(epoch_index=selected_epoch)
+        node_evaluation = next(
+            (entry for entry in settlement_report["node_evaluations"] if entry["node_id"] == node_id),
+            None,
+        )
+        selected_epoch_active = any(entry["node_id"] == node_id for entry in epoch_state["active_reward_nodes"])
+        selected_epoch_assigned = any(entry["node_id"] == node_id for entry in epoch_state["assignments"])
+        exclusion_reason = self._reward_node_epoch_exclusion_reason(
+            node_id=node_id,
+            registry_row=row,
+            record=record,
+            selected_epoch=selected_epoch,
+            evaluation_height=evaluation_height,
+            node_evaluation=node_evaluation,
+            selected_epoch_active=selected_epoch_active,
+            selected_epoch_assigned=selected_epoch_assigned,
+        )
+        latest_settlement = settlements[-1] if settlements else None
+        return {
+            "node_id": node_id,
+            "epoch_index": selected_epoch,
+            "tip_height": current_height,
+            "tip_hash": None if tip is None else tip.block_hash,
+            "current_epoch": int(row["current_epoch"]),
+            "payout_address": row["payout_address"],
+            "declared_host": row["declared_host"],
+            "declared_port": row["declared_port"],
+            "active": bool(row["active"]),
+            "eligibility_status": row["eligibility_status"],
+            "eligibility_reason": row["eligibility_reason"],
+            "registered_at_height": int(row["registered_at_height"]),
+            "last_renewal_height": int(row["last_renewal_height"]),
+            "last_renewal_epoch": int(row["last_renewal_epoch"]),
+            "warmup_complete": bool(row["warmup_complete"]),
+            "warmup_complete_epoch": int(row["warmup_complete_epoch"]),
+            "warmup_complete_height": int(row["warmup_complete_height"]),
+            "eligible_from_height": int(row["eligible_from_height"]),
+            "selected_epoch_active": selected_epoch_active,
+            "selected_epoch_assigned": selected_epoch_assigned,
+            "selected_epoch_assignment": None if not assignments else assignments[0],
+            "selected_epoch_exclusion_reason": exclusion_reason,
+            "selected_epoch_evaluation_height": evaluation_height,
+            "selected_epoch_settlement_status": self._reward_epoch_settlement_status(
+                epoch_index=selected_epoch,
+                settlement_count=len(settlements),
+            ),
+            "selected_epoch_settlement_reason": self._reward_epoch_settlement_reason(
+                epoch_index=selected_epoch,
+                settlement_count=len(settlements),
+                settlement_report=settlement_report,
+            ),
+            "selected_epoch_latest_settlement": latest_settlement,
+            "reward_state_anchor": epoch_state["reward_state_anchor"],
+        }
+
+    def reward_epoch_summary(self, *, epoch_index: int) -> dict[str, object]:
+        """Return one concise operator-facing epoch summary payload."""
+
+        epoch_state = self.native_reward_epoch_state(epoch_index=epoch_index)
+        settlement_report = self.native_reward_settlement_report(epoch_index=epoch_index)
+        settlements = self.native_reward_settlement_diagnostics(epoch_index=epoch_index)
+        latest_settlement = settlements[-1] if settlements else None
+        return {
+            "epoch_index": int(epoch_state["epoch_index"]),
+            "tip_height": int(epoch_state["tip_height"]),
+            "tip_hash": epoch_state["tip_hash"],
+            "reward_state_anchor": epoch_state["reward_state_anchor"],
+            "active_reward_node_count": int(epoch_state["active_reward_node_count"]),
+            "active_reward_node_ids": [entry["node_id"] for entry in epoch_state["active_reward_nodes"]],
+            "active_reward_nodes": epoch_state["active_reward_nodes"],
+            "assignments_count": int(epoch_state["assignments_count"]),
+            "assignments_by_node": {
+                entry["node_id"]: {
+                    "candidate_check_windows": entry["candidate_check_windows"],
+                    "verifier_committees": entry["verifier_committees"],
+                }
+                for entry in epoch_state["assignments"]
+            },
+            "comparison_keys": epoch_state["comparison_keys"],
+            "settlement_status": self._reward_epoch_settlement_status(
+                epoch_index=int(epoch_state["epoch_index"]),
+                settlement_count=len(settlements),
+            ),
+            "settlement_reason": self._reward_epoch_settlement_reason(
+                epoch_index=int(epoch_state["epoch_index"]),
+                settlement_count=len(settlements),
+                settlement_report=settlement_report,
+            ),
+            "settlement_exists": bool(settlements),
+            "stored_settlement_count": len(settlements),
+            "latest_settlement": latest_settlement,
+            "rewarded_node_count": (
+                int(latest_settlement["rewarded_node_count"])
+                if latest_settlement is not None
+                else int(settlement_report["rewarded_node_count"])
+            ),
+            "rewarded_node_ids": (
+                [entry["node_id"] for entry in latest_settlement["reward_entries"]]
+                if latest_settlement is not None
+                else [entry["node_id"] for entry in settlement_report["reward_entries"]]
+            ),
+            "reward_entries": latest_settlement["reward_entries"] if latest_settlement is not None else settlement_report["reward_entries"],
+            "payout_totals": (
+                {
+                    "distributed_node_reward_chipbits": int(latest_settlement["distributed_node_reward_chipbits"]),
+                    "undistributed_node_reward_chipbits": int(latest_settlement["undistributed_node_reward_chipbits"]),
+                }
+                if latest_settlement is not None
+                else settlement_report["settlement_accounting_summary"]
+            ),
         }
 
     def build_native_reward_settlement(
@@ -2091,6 +2349,88 @@ class NodeService:
         if descending:
             rows.reverse()
         return rows[:limit]
+
+    def _reward_node_eligibility_reason(
+        self,
+        record,
+        *,
+        evaluation_height: int,
+        selected_epoch: int,
+    ) -> str:
+        """Explain one node registry eligibility status at one evaluation height."""
+
+        renewal_epoch = current_epoch(record.last_renewed_height, self.params)
+        warmup_complete_height = reward_node_warmup_complete_height(record, self.params)
+        eligible_from_height = reward_node_eligible_from_height(record, self.params)
+        if reward_node_is_active(record, height=evaluation_height, params=self.params):
+            return f"active_from_height_{eligible_from_height}"
+        if renewal_epoch != selected_epoch:
+            return f"missed_renewal_for_epoch_{selected_epoch}"
+        if record.last_renewed_height >= evaluation_height:
+            return f"pending_activation_until_height_{eligible_from_height}"
+        if not reward_node_warmup_satisfied(record, height=evaluation_height, params=self.params):
+            return f"warming_up_until_height_{warmup_complete_height}"
+        return "inactive_for_epoch"
+
+    def _reward_epoch_settlement_status(self, *, epoch_index: int, settlement_count: int) -> str:
+        """Return one short machine-friendly settlement lifecycle status."""
+
+        tip = self.chain_tip()
+        current_height = -1 if tip is None else tip.height
+        if settlement_count > 0:
+            return "closed"
+        if current_height < epoch_close_height(epoch_index, self.params):
+            return "open"
+        return "unsettled"
+
+    def _reward_epoch_settlement_reason(
+        self,
+        *,
+        epoch_index: int,
+        settlement_count: int,
+        settlement_report: dict[str, object],
+    ) -> str:
+        """Explain settlement presence or absence for one epoch."""
+
+        status = self._reward_epoch_settlement_status(epoch_index=epoch_index, settlement_count=settlement_count)
+        if status == "closed":
+            return "settlement_stored"
+        if status == "open":
+            return "no_settlement_because_epoch_open"
+        if int(settlement_report["rewarded_node_count"]) == 0:
+            return "no_reward_because_no_valid_attestations"
+        return "no_settlement_stored_for_closed_epoch"
+
+    def _reward_node_epoch_exclusion_reason(
+        self,
+        *,
+        node_id: str,
+        registry_row: dict[str, object],
+        record,
+        selected_epoch: int,
+        evaluation_height: int,
+        node_evaluation: dict[str, object] | None,
+        selected_epoch_active: bool,
+        selected_epoch_assigned: bool,
+    ) -> str | None:
+        """Explain why one node is not active or assigned in one epoch."""
+
+        if selected_epoch_assigned:
+            return None
+        if not selected_epoch_active:
+            renewal_epoch = current_epoch(record.last_renewed_height, self.params)
+            if renewal_epoch != selected_epoch:
+                return f"no_assignment_because_stale_missed_renewal_for_epoch_{selected_epoch}"
+            warmup_complete_height = reward_node_warmup_complete_height(record, self.params)
+            if not reward_node_warmup_satisfied(record, height=evaluation_height, params=self.params):
+                return f"no_assignment_because_warming_up_until_height_{warmup_complete_height}"
+            eligible_from_height = reward_node_eligible_from_height(record, self.params)
+            if eligible_from_height > evaluation_height:
+                return f"no_assignment_because_active_from_height_{eligible_from_height}"
+            return "no_assignment_because_inactive"
+        if node_evaluation is not None and node_evaluation.get("not_rewarded_reason"):
+            return str(node_evaluation["not_rewarded_reason"])
+        return "no_assignment_because_not_selected"
 
     def reward_summary(
         self,

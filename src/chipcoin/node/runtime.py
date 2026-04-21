@@ -11,6 +11,7 @@ import threading
 from dataclasses import dataclass, field
 from wsgiref.simple_server import make_server
 
+from .. import __version__
 from ..config import get_network_config
 from ..consensus.validation import ContextualValidationError, StatelessValidationError, ValidationError
 from ..interfaces.http_api import HttpApiApp, ThreadingWSGIServer, load_allowed_origins_from_env
@@ -2299,7 +2300,7 @@ class NodeRuntime:
             node_id=self.node_id,
             network=self.service.network,
             start_height=0 if tip is None else tip.height,
-            user_agent="/chipcoin-v2:0.1.0/",
+            user_agent=f"/chipcoin-v2:{__version__}/",
             network_magic=get_network_config(self.service.network).magic,
         )
 
