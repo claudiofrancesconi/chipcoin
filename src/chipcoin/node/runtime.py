@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import ipaddress
 import json
 import logging
@@ -556,7 +557,7 @@ class NodeRuntime:
             raise ValueError(f"attestation wallet does not match reward node node_pubkey for node_id={record.node_id}")
         recorded_identities = self.service.reward_attestations.attestation_identities()
         assignments = self.service.native_reward_assignments(epoch_index=current_epoch_index)
-        bundles_by_window: dict[int, list[RewardAttestation]] = {}
+        selected_candidates_by_window: dict[int, str] = {}
         for assignment in assignments:
             candidate_node_id = str(assignment["node_id"])
             for window_index in assignment["candidate_check_windows"]:
@@ -564,6 +565,33 @@ class NodeRuntime:
                 identity = (current_epoch_index, int(window_index), candidate_node_id, self.reward_automation.node_id)
                 if self.reward_automation.node_id not in committee:
                     continue
+                if identity in recorded_identities or identity in self._reward_submitted_attestation_identities:
+                    continue
+                attestation_score = hashlib.sha256(
+                    (
+                        f"reward-auto-attest|{current_epoch_index}|{int(window_index)}|"
+                        f"{self.reward_automation.node_id}|{candidate_node_id}"
+                    ).encode("utf-8")
+                ).hexdigest()
+                selected_candidate = selected_candidates_by_window.get(int(window_index))
+                if selected_candidate is None:
+                    selected_candidates_by_window[int(window_index)] = candidate_node_id
+                    continue
+                selected_score = hashlib.sha256(
+                    (
+                        f"reward-auto-attest|{current_epoch_index}|{int(window_index)}|"
+                        f"{self.reward_automation.node_id}|{selected_candidate}"
+                    ).encode("utf-8")
+                ).hexdigest()
+                if (attestation_score, candidate_node_id) < (selected_score, selected_candidate):
+                    selected_candidates_by_window[int(window_index)] = candidate_node_id
+        bundles_by_window: dict[int, list[RewardAttestation]] = {}
+        for assignment in assignments:
+            candidate_node_id = str(assignment["node_id"])
+            for window_index in assignment["candidate_check_windows"]:
+                if selected_candidates_by_window.get(int(window_index)) != candidate_node_id:
+                    continue
+                identity = (current_epoch_index, int(window_index), candidate_node_id, self.reward_automation.node_id)
                 if identity in recorded_identities or identity in self._reward_submitted_attestation_identities:
                     continue
                 endpoint_commitment = f"{assignment['declared_host']}:{assignment['declared_port']}"
@@ -606,6 +634,7 @@ class NodeRuntime:
                 len(attestations),
                 transaction.txid(),
             )
+            return
 
     def _build_reward_attestation_bundle_transaction(
         self,
