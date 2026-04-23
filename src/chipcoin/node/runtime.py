@@ -547,6 +547,10 @@ class NodeRuntime:
 
         assert self.reward_automation is not None
         assert self._reward_attest_wallet is not None
+        tip = self.service.chain_tip()
+        next_height = 0 if tip is None else tip.height + 1
+        if next_height < self.service.params.node_reward_activation_height:
+            return
         status = self.service.reward_node_status(node_id=self.reward_automation.node_id, epoch_index=current_epoch_index)
         if not bool(status.get("selected_epoch_active")):
             return
