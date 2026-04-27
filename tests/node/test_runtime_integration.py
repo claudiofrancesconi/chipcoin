@@ -645,6 +645,94 @@ def test_runtimes_on_different_network_magics_fail_fast() -> None:
     asyncio.run(scenario())
 
 
+def test_devnet_runtime_rejects_testnet_peer_before_handshake_or_sync() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            dev_service = NodeService.open_sqlite(
+                Path(tempdir) / "dev.sqlite3",
+                network="devnet",
+                time_provider=lambda: 1_700_000_000,
+            )
+            test_service = NodeService.open_sqlite(
+                Path(tempdir) / "test.sqlite3",
+                network="testnet",
+                time_provider=lambda: 1_700_001_000,
+            )
+            dev_runtime = NodeRuntime(service=dev_service, listen_host="127.0.0.1", listen_port=0, ping_interval=0.2)
+            await dev_runtime.start()
+            test_runtime = NodeRuntime(
+                service=test_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                outbound_peers=[OutboundPeer("127.0.0.1", dev_runtime.bound_port)],
+                connect_interval=0.1,
+                ping_interval=0.2,
+                handshake_timeout=0.5,
+            )
+            await test_runtime.start()
+            try:
+                await _wait_until(
+                    lambda: dev_service.peer_summary()["error_class_counts"].get("wrong_network_magic", 0) >= 1
+                )
+                assert dev_runtime.connected_peer_count() == 0
+                assert test_runtime.connected_peer_count() == 0
+                assert not any(peer.handshake_complete is True for peer in dev_service.list_peers())
+                assert not any(peer.handshake_complete is True for peer in test_service.list_peers())
+                assert dev_service.status()["sync"]["header_peers"] == []
+                assert dev_service.status()["sync"]["block_peers"] == []
+                assert test_service.status()["sync"]["header_peers"] == []
+                assert test_service.status()["sync"]["block_peers"] == []
+            finally:
+                await test_runtime.stop()
+                await dev_runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_testnet_runtime_rejects_devnet_peer_before_handshake_or_sync() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            test_service = NodeService.open_sqlite(
+                Path(tempdir) / "test.sqlite3",
+                network="testnet",
+                time_provider=lambda: 1_700_000_000,
+            )
+            dev_service = NodeService.open_sqlite(
+                Path(tempdir) / "dev.sqlite3",
+                network="devnet",
+                time_provider=lambda: 1_700_001_000,
+            )
+            test_runtime = NodeRuntime(service=test_service, listen_host="127.0.0.1", listen_port=0, ping_interval=0.2)
+            await test_runtime.start()
+            dev_runtime = NodeRuntime(
+                service=dev_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                outbound_peers=[OutboundPeer("127.0.0.1", test_runtime.bound_port)],
+                connect_interval=0.1,
+                ping_interval=0.2,
+                handshake_timeout=0.5,
+            )
+            await dev_runtime.start()
+            try:
+                await _wait_until(
+                    lambda: test_service.peer_summary()["error_class_counts"].get("wrong_network_magic", 0) >= 1
+                )
+                assert test_runtime.connected_peer_count() == 0
+                assert dev_runtime.connected_peer_count() == 0
+                assert not any(peer.handshake_complete is True for peer in test_service.list_peers())
+                assert not any(peer.handshake_complete is True for peer in dev_service.list_peers())
+                assert test_service.status()["sync"]["header_peers"] == []
+                assert test_service.status()["sync"]["block_peers"] == []
+                assert dev_service.status()["sync"]["header_peers"] == []
+                assert dev_service.status()["sync"]["block_peers"] == []
+            finally:
+                await dev_runtime.stop()
+                await test_runtime.stop()
+
+    asyncio.run(scenario())
+
+
 def test_runtime_relays_transaction_inserted_via_shared_node_database() -> None:
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:

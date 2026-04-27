@@ -1,6 +1,6 @@
 import asyncio
 
-from chipcoin.config import DEVNET_CONFIG, MAINNET_CONFIG
+from chipcoin.config import DEVNET_CONFIG, MAINNET_CONFIG, TESTNET_CONFIG
 from chipcoin.node.messages import MessageEnvelope, PingMessage, VersionMessage
 from chipcoin.node.p2p.codec import decode_message, encode_message
 from chipcoin.node.p2p.protocol import LocalPeerIdentity, PeerProtocol, ProtocolError
@@ -226,6 +226,49 @@ def test_handshake_rejects_wrong_network_magic_before_application_handshake() ->
         try:
             results = await asyncio.gather(outbound.start(), inbound.start(), return_exceptions=True)
             assert any(isinstance(result, WrongNetworkMagicError) for result in results)
+            combined_errors = " ".join(outbound.state.errors + inbound.state.errors).lower()
+            assert "unexpected network magic" in combined_errors
+        finally:
+            await outbound.close()
+            await inbound.close()
+
+    asyncio.run(scenario())
+
+
+def test_devnet_testnet_handshake_rejects_wrong_network_magic_before_sync_messages() -> None:
+    async def scenario() -> None:
+        outbound_transport, inbound_transport = _make_transport_pair()
+        outbound = PeerProtocol(
+            transport=outbound_transport,
+            identity=LocalPeerIdentity(
+                node_id="dev-node",
+                network="devnet",
+                start_height=0,
+                user_agent="/chipcoin:dev/",
+                network_magic=DEVNET_CONFIG.magic,
+            ),
+            inbound=False,
+            handshake_timeout=0.5,
+        )
+        inbound = PeerProtocol(
+            transport=inbound_transport,
+            identity=LocalPeerIdentity(
+                node_id="test-node",
+                network="testnet",
+                start_height=0,
+                user_agent="/chipcoin:test/",
+                network_magic=TESTNET_CONFIG.magic,
+            ),
+            inbound=True,
+            handshake_timeout=0.5,
+        )
+        try:
+            results = await asyncio.gather(outbound.start(), inbound.start(), return_exceptions=True)
+            assert any(isinstance(result, WrongNetworkMagicError) for result in results)
+            assert outbound.state.handshake_complete is False
+            assert inbound.state.handshake_complete is False
+            assert outbound.state.remote_version is None
+            assert inbound.state.remote_version is None
             combined_errors = " ".join(outbound.state.errors + inbound.state.errors).lower()
             assert "unexpected network magic" in combined_errors
         finally:
