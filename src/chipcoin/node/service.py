@@ -1301,6 +1301,7 @@ class NodeService:
             "supply": {
                 "network": supply["network"],
                 "height": supply["height"],
+                "tip_hash": supply["tip_hash"],
                 "max_supply_chipbits": supply["max_supply_chipbits"],
                 "scheduled_supply_chipbits": supply["scheduled_supply_chipbits"],
                 "scheduled_miner_supply_chipbits": supply["scheduled_miner_supply_chipbits"],
@@ -1313,6 +1314,8 @@ class NodeService:
                 "minted_supply_chipbits": supply["minted_supply_chipbits"],
                 "miner_minted_supply_chipbits": supply["miner_minted_supply_chipbits"],
                 "node_minted_supply_chipbits": supply["node_minted_supply_chipbits"],
+                "burned_supply_chipbits": supply["burned_supply_chipbits"],
+                "immature_supply_chipbits": supply["immature_supply_chipbits"],
                 "circulating_supply_chipbits": supply["circulating_supply_chipbits"],
                 "remaining_supply_chipbits": supply["remaining_supply_chipbits"],
             },
@@ -3027,6 +3030,7 @@ class NodeService:
 
         tip = self.chain_tip()
         height = None if tip is None else tip.height
+        tip_hash = None if tip is None else tip.block_hash
         scheduled_supply_chipbits = total_subsidy_through_height(-1 if tip is None else tip.height, self.params)
         scheduled_miner_supply_chipbits = 0
         scheduled_node_reward_supply_chipbits = 0
@@ -3050,6 +3054,7 @@ class NodeService:
         return {
             "network": self.network,
             "height": height,
+            "tip_hash": tip_hash,
             "max_supply_chipbits": self.params.max_money_chipbits,
             "scheduled_supply_chipbits": scheduled_supply_chipbits,
             "scheduled_miner_supply_chipbits": scheduled_miner_supply_chipbits,

@@ -187,9 +187,31 @@ Derived expectations:
 - all values are clamped to integer base units
 
 The `scheduled_*` counters describe the theoretical protocol budget through the
-active tip. The `materialized_*` counters describe actual coinbase outputs on the
-active chain. Public explorer supply should use `materialized_supply` and
+active tip. They answer "how much subsidy was available by this height?".
+
+The `materialized_*` counters describe actual coinbase issuance on the active
+chain. They answer "how much CHC actually exists as miner subsidy and node reward
+outputs?". Public explorer supply should use `materialized_supply` and
 `circulating_supply`, not scheduled supply.
+
+`undistributed_node_reward_supply` is the scheduled node-reward budget that did
+not materialize into coinbase outputs because no node qualified, no settlement
+distributed it, or an epoch settled with zero reward entries. It is an accounting
+diagnostic, not a balance and not a carry-forward pool.
+
+Node rewards are not extra inflation. Miner subsidy and node reward pool are
+both parts of the same capped subsidy schedule. If a node reward is paid, it
+materializes inside the block coinbase and increases `materialized_supply`. If it
+is not paid, it remains unminted and only increases
+`undistributed_node_reward_supply`.
+
+`immature_supply` is materialized coinbase supply that exists on-chain but is not
+yet spendable under coinbase maturity. `circulating_supply` is therefore:
+
+- `circulating_supply = materialized_supply - burned_supply - immature_supply`
+
+Every supply surface should include the active `height` and `tip_hash` so CLI,
+HTTP API and explorer checks can compare values from the same chain tip.
 
 ## Reorg Safety
 
@@ -212,6 +234,7 @@ Must return:
 
 - `network`
 - `height`
+- `tip_hash`
 - `max_supply`
 - `scheduled_supply`
 - `scheduled_miner_supply`
@@ -234,9 +257,12 @@ All values should be returned in base units, with optional CHC-formatted mirrors
 Must add a reduced summary:
 
 - `max_supply`
+- `height`
+- `tip_hash`
 - `materialized_supply`
 - `undistributed_node_reward_supply`
 - `minted_supply`
+- `immature_supply`
 - `circulating_supply`
 - `remaining_supply`
 

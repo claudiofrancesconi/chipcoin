@@ -134,6 +134,42 @@ def test_http_api_health_status_and_tip() -> None:
         assert tip_body == {"height": None, "block_hash": None}
 
 
+def test_http_api_supply_matches_cli_and_status_on_same_tip() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        miner_address = wallet_key(0).address
+        service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
+        service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
+        app = HttpApiApp(service)
+
+        status_status, _, status_body = _call_wsgi(app, method="GET", path="/v1/status")
+        supply_status, _, supply_body = _call_wsgi(app, method="GET", path="/v1/supply")
+        cli_code, cli_supply = _run_cli(["--data", str(db_path), "supply"])
+
+        assert status_status == "200 OK"
+        assert supply_status == "200 OK"
+        assert cli_code == 0
+        assert status_body["tip_hash"] == supply_body["tip_hash"] == cli_supply["tip_hash"]
+        assert status_body["height"] == supply_body["height"] == cli_supply["height"]
+        for key in (
+            "scheduled_supply_chipbits",
+            "scheduled_miner_supply_chipbits",
+            "scheduled_node_reward_supply_chipbits",
+            "materialized_supply_chipbits",
+            "materialized_miner_supply_chipbits",
+            "materialized_node_reward_supply_chipbits",
+            "undistributed_node_reward_supply_chipbits",
+            "minted_supply_chipbits",
+            "miner_minted_supply_chipbits",
+            "node_minted_supply_chipbits",
+            "circulating_supply_chipbits",
+            "immature_supply_chipbits",
+            "remaining_supply_chipbits",
+        ):
+            assert status_body["supply"][key] == supply_body[key] == cli_supply[key]
+
+
 def test_http_api_exposes_mining_status_and_template() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
@@ -177,6 +213,7 @@ def test_http_api_exposes_native_reward_epoch_routes() -> None:
             reward_verifier_quorum=1,
             reward_final_confirmation_window_blocks=1,
             max_rewarded_nodes_per_epoch=4,
+            reward_node_warmup_epochs=0,
         )
         timestamps = iter(range(1_700_000_000, 1_700_000_400))
         service = NodeService.open_sqlite(

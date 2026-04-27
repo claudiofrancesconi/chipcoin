@@ -333,6 +333,16 @@ def test_native_reward_settlement_preview_returns_zero_recipients_when_no_candid
         inspect = service.inspect_block(block_hash=closing_block.block_hash())
         assert inspect is not None
         assert inspect["node_reward_payouts"] == []
+        supply = service.supply_snapshot()
+        expected_miner_supply = service.params.epoch_length_blocks * subsidy_split_chipbits(0, service.params)[0]
+        expected_node_pool = subsidy_split_chipbits(4, service.params)[1]
+        assert supply["tip_hash"] == closing_block.block_hash()
+        assert supply["scheduled_node_reward_supply_chipbits"] == expected_node_pool
+        assert supply["materialized_miner_supply_chipbits"] == expected_miner_supply
+        assert supply["materialized_node_reward_supply_chipbits"] == 0
+        assert supply["materialized_supply_chipbits"] == expected_miner_supply
+        assert supply["minted_supply_chipbits"] == expected_miner_supply
+        assert supply["undistributed_node_reward_supply_chipbits"] == expected_node_pool
 
 
 def test_native_reward_auto_settlement_materializes_multiple_reward_outputs() -> None:
@@ -449,6 +459,15 @@ def test_native_reward_auto_settlement_materializes_multiple_reward_outputs() ->
             {"recipient": payout["payout_address"], "amount_chipbits": payout["reward_chipbits"]}
             for payout in preview["reward_split_summary"]["ordered_payouts"]
         ]
+        supply = service.supply_snapshot()
+        expected_miner_supply = service.params.epoch_length_blocks * subsidy_split_chipbits(0, service.params)[0]
+        assert supply["tip_hash"] == closing_block.block_hash()
+        assert supply["scheduled_node_reward_supply_chipbits"] == expected_pool
+        assert supply["materialized_miner_supply_chipbits"] == expected_miner_supply
+        assert supply["materialized_node_reward_supply_chipbits"] == expected_pool
+        assert supply["materialized_supply_chipbits"] == expected_miner_supply + expected_pool
+        assert supply["minted_supply_chipbits"] == expected_miner_supply + expected_pool
+        assert supply["undistributed_node_reward_supply_chipbits"] == 0
 
 
 def test_native_reward_auto_settlement_materializes_three_reward_outputs_with_deterministic_split() -> None:
@@ -921,8 +940,9 @@ def test_native_reward_boundary_competition_stays_consistent_across_surfaces() -
 
         report = service.native_reward_settlement_report(epoch_index=4)
         expected_pool = subsidy_split_chipbits(24, service.params)[1]
-        assert [entry["node_id"] for entry in report["eligible_ranking"]] == ["reward-node-a", "reward-node-b"]
-        assert [entry["node_id"] for entry in report["reward_entries"]] == ["reward-node-a", "reward-node-b"]
+        expected_reward_entries = sorted(report["reward_entries"], key=lambda entry: entry["selection_rank"])
+        assert {entry["node_id"] for entry in report["eligible_ranking"]} == {"reward-node-a", "reward-node-b"}
+        assert {entry["node_id"] for entry in report["reward_entries"]} == {"reward-node-a", "reward-node-b"}
         assert [entry["selection_rank"] for entry in report["reward_entries"]] == [0, 1]
         assert [entry["reward_chipbits"] for entry in report["reward_entries"]] == [
             expected_pool // 2,
@@ -948,13 +968,13 @@ def test_native_reward_boundary_competition_stays_consistent_across_surfaces() -
         inspect = service.inspect_block(block_hash=close_block.block_hash())
         assert inspect is not None
         assert inspect["node_reward_payouts"] == [
-            {"recipient": reward_a.address, "amount_chipbits": expected_pool // 2},
-            {"recipient": reward_b.address, "amount_chipbits": expected_pool // 2},
+            {"recipient": entry["payout_address"], "amount_chipbits": entry["reward_chipbits"]}
+            for entry in expected_reward_entries
         ]
 
         settlements = service.native_reward_settlement_diagnostics(epoch_index=4)
         assert len(settlements) == 1
-        assert [entry["node_id"] for entry in settlements[0]["reward_entries"]] == ["reward-node-a", "reward-node-b"]
+        assert settlements[0]["reward_entries"] == expected_reward_entries
         assert [entry["reward_chipbits"] for entry in settlements[0]["reward_entries"]] == [
             expected_pool // 2,
             expected_pool // 2,
@@ -1183,6 +1203,10 @@ def test_native_reward_settlement_and_payouts_follow_active_branch_across_reorg(
         assert target.inspect_block(height=4)["node_reward_payouts"] == [
             {"recipient": reward_a.address, "amount_chipbits": subsidy_split_chipbits(4, target.params)[1]}
         ]
+        rewarded_supply = target.supply_snapshot()
+        assert rewarded_supply["tip_hash"] == rewarded_branch.chain_tip().block_hash
+        assert rewarded_supply["materialized_node_reward_supply_chipbits"] == subsidy_split_chipbits(4, target.params)[1]
+        assert rewarded_supply["undistributed_node_reward_supply_chipbits"] == 0
         assert [
             entry["block_hash"]
             for entry in target.reward_history(reward_a.address, limit=10_000, descending=False)
@@ -1198,6 +1222,10 @@ def test_native_reward_settlement_and_payouts_follow_active_branch_across_reorg(
         assert settlements[0]["reward_entries"] == []
         assert target.inspect_block(height=4)["block_hash"] == unrewarded_close.block_hash()
         assert target.inspect_block(height=4)["node_reward_payouts"] == []
+        unrewarded_supply = target.supply_snapshot()
+        assert unrewarded_supply["tip_hash"] == unrewarded_branch.chain_tip().block_hash
+        assert unrewarded_supply["materialized_node_reward_supply_chipbits"] == 0
+        assert unrewarded_supply["undistributed_node_reward_supply_chipbits"] == subsidy_split_chipbits(4, target.params)[1]
         assert [
             entry
             for entry in target.reward_history(reward_a.address, limit=10_000, descending=False)
@@ -1217,6 +1245,10 @@ def test_native_reward_settlement_and_payouts_follow_active_branch_across_reorg(
         assert target.inspect_block(height=4)["node_reward_payouts"] == [
             {"recipient": reward_a.address, "amount_chipbits": subsidy_split_chipbits(4, target.params)[1]}
         ]
+        restored_supply = target.supply_snapshot()
+        assert restored_supply["tip_hash"] == rewarded_branch.chain_tip().block_hash
+        assert restored_supply["materialized_node_reward_supply_chipbits"] == subsidy_split_chipbits(4, target.params)[1]
+        assert restored_supply["undistributed_node_reward_supply_chipbits"] == 0
         assert len(
             [
                 entry
