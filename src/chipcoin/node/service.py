@@ -247,6 +247,8 @@ class NodeService:
         self._mining_template_ttl_seconds = 15
         self._mining_templates: dict[str, MiningTemplateRecord] = {}
         self._template_cache_tip_hash: str | None = None
+        self._supply_snapshot_cache_key: tuple[int | None, str | None] | None = None
+        self._supply_snapshot_cache: dict[str, int | str | None] | None = None
         self._node_source_id = secrets.token_hex(8)
 
     @classmethod
@@ -398,6 +400,7 @@ class NodeService:
         self._set_chain_meta("snapshot_trusted_signature_count", str(snapshot.trusted_signature_count))
         self._set_chain_meta("snapshot_accepted_signer_pubkeys", json.dumps(list(snapshot.accepted_signer_pubkeys)))
         self._set_chain_meta("snapshot_trust_warnings", json.dumps(list(snapshot.warnings)))
+        self.invalidate_supply_snapshot()
         self.invalidate_mining_templates()
         self.set_runtime_sync_status(None)
 
@@ -646,6 +649,12 @@ class NodeService:
         self._mining_templates.clear()
         self._template_cache_tip_hash = None
 
+    def invalidate_supply_snapshot(self) -> None:
+        """Drop cached supply diagnostics after active-chain state changes."""
+
+        self._supply_snapshot_cache_key = None
+        self._supply_snapshot_cache = None
+
     def expected_next_bits(self) -> int:
         """Return the compact target required for the next candidate block."""
 
@@ -705,6 +714,7 @@ class NodeService:
         self._apply_native_reward_block(block, height)
         self.headers.set_tip(block.block_hash(), height)
         self.mempool.reconcile()
+        self.invalidate_supply_snapshot()
         self.invalidate_mining_templates()
         return total_fees
 
@@ -841,6 +851,8 @@ class NodeService:
         self.headers.set_main_chain(path_hashes)
         disconnected_transactions = self._disconnected_branch_transactions(previous_tip, tip_hash)
         self.mempool.reconcile(extra_transactions=disconnected_transactions)
+        self.invalidate_supply_snapshot()
+        self.invalidate_mining_templates()
         return ChainActivationResult(
             activated_tip=tip_hash,
             applied_blocks=applied_blocks,
@@ -3031,6 +3043,10 @@ class NodeService:
         tip = self.chain_tip()
         height = None if tip is None else tip.height
         tip_hash = None if tip is None else tip.block_hash
+        cache_key = (height, tip_hash)
+        if self._supply_snapshot_cache_key == cache_key and self._supply_snapshot_cache is not None:
+            return dict(self._supply_snapshot_cache)
+
         scheduled_supply_chipbits = total_subsidy_through_height(-1 if tip is None else tip.height, self.params)
         scheduled_miner_supply_chipbits = 0
         scheduled_node_reward_supply_chipbits = 0
@@ -3039,7 +3055,9 @@ class NodeService:
                 miner_subsidy_chipbits, node_reward_chipbits = subsidy_split_chipbits(block_height, self.params)
                 scheduled_miner_supply_chipbits += miner_subsidy_chipbits
                 scheduled_node_reward_supply_chipbits += node_reward_chipbits
-        materialized_supply = self._materialized_supply_snapshot()
+        materialized_supply = self._materialized_supply_snapshot(
+            scheduled_miner_supply_chipbits=scheduled_miner_supply_chipbits,
+        )
         maturity_supply = self._supply_snapshot()
         burned_supply_chipbits = 0
         circulating_supply_chipbits = (
@@ -3051,7 +3069,7 @@ class NodeService:
             0,
             scheduled_node_reward_supply_chipbits - materialized_supply["materialized_node_reward_supply_chipbits"],
         )
-        return {
+        snapshot = {
             "network": self.network,
             "height": height,
             "tip_hash": tip_hash,
@@ -3075,6 +3093,9 @@ class NodeService:
                 self.params.max_money_chipbits - materialized_supply["materialized_supply_chipbits"],
             ),
         }
+        self._supply_snapshot_cache_key = cache_key
+        self._supply_snapshot_cache = dict(snapshot)
+        return dict(snapshot)
 
     def supply_diagnostics(self) -> dict[str, object]:
         """Return a detailed supply and maturity snapshot for the active chain."""
@@ -3474,8 +3495,18 @@ class NodeService:
             "total_utxo_count": total_utxo_count,
         }
 
-    def _materialized_supply_snapshot(self) -> dict[str, int]:
+    def _materialized_supply_snapshot(self, *, scheduled_miner_supply_chipbits: int | None = None) -> dict[str, int]:
         """Return issued supply that actually exists in active-chain coinbases."""
+
+        settlement_total = getattr(self.reward_settlements, "total_distributed_node_reward_chipbits", None)
+        if scheduled_miner_supply_chipbits is not None and callable(settlement_total):
+            materialized_node_reward_supply_chipbits = int(settlement_total())
+            return {
+                "materialized_supply_chipbits": scheduled_miner_supply_chipbits
+                + materialized_node_reward_supply_chipbits,
+                "materialized_miner_supply_chipbits": scheduled_miner_supply_chipbits,
+                "materialized_node_reward_supply_chipbits": materialized_node_reward_supply_chipbits,
+            }
 
         tip = self.chain_tip()
         materialized_miner_supply_chipbits = 0

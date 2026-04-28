@@ -192,6 +192,61 @@ def test_http_api_supply_matches_cli_and_status_on_same_tip() -> None:
             assert status_body["supply"][key] == supply_body[key] == cli_supply[key]
 
 
+def test_http_api_reuses_supply_snapshot_until_tip_changes() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        miner_address = wallet_key(0).address
+        service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
+        app = HttpApiApp(service)
+        calls = {"materialized": 0, "maturity": 0}
+        original_materialized = service._materialized_supply_snapshot
+        original_maturity = service._supply_snapshot
+
+        def materialized_snapshot(**kwargs):
+            calls["materialized"] += 1
+            return original_materialized(**kwargs)
+
+        def maturity_snapshot():
+            calls["maturity"] += 1
+            return original_maturity()
+
+        service._materialized_supply_snapshot = materialized_snapshot
+        service._supply_snapshot = maturity_snapshot
+
+        status_status, _, status_body = _call_wsgi(app, method="GET", path="/v1/status")
+        supply_status, _, supply_body = _call_wsgi(app, method="GET", path="/v1/supply")
+
+        assert status_status == "200 OK"
+        assert supply_status == "200 OK"
+        assert status_body["supply"]["tip_hash"] == supply_body["tip_hash"]
+        assert calls == {"materialized": 1, "maturity": 1}
+
+        service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
+        supply_status, _, supply_body = _call_wsgi(app, method="GET", path="/v1/supply")
+
+        assert supply_status == "200 OK"
+        assert supply_body["height"] == 1
+        assert calls == {"materialized": 2, "maturity": 2}
+
+
+def test_supply_snapshot_uses_settlement_aggregate_without_block_walk() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        miner_address = wallet_key(0).address
+        service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
+
+        def unexpected_block_read(height: int):
+            raise AssertionError(f"supply snapshot should not deserialize active blocks, got height {height}")
+
+        service.get_block_by_height = unexpected_block_read
+
+        supply = service.supply_snapshot()
+
+        assert supply["height"] == 0
+        assert supply["materialized_miner_supply_chipbits"] == supply["scheduled_miner_supply_chipbits"]
+        assert supply["materialized_node_reward_supply_chipbits"] == 0
+
+
 def test_http_api_exposes_mining_status_and_template() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")

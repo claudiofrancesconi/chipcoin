@@ -321,6 +321,15 @@ class SQLiteEpochSettlementRepository:
         rows = self.connection.execute("SELECT epoch_index FROM epoch_settlements").fetchall()
         return {int(row["epoch_index"]) for row in rows}
 
+    def total_distributed_node_reward_chipbits(self) -> int:
+        row = self.connection.execute(
+            """
+            SELECT COALESCE(SUM(distributed_node_reward_chipbits), 0) AS total
+            FROM epoch_settlements
+            """
+        ).fetchone()
+        return 0 if row is None else int(row["total"])
+
     def replace_all(self, settlements: list[StoredEpochSettlement]) -> None:
         with self.connection:
             self.connection.execute("DELETE FROM epoch_settlement_entries")

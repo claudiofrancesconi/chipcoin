@@ -212,5 +212,6 @@ def test_native_reward_repositories_roundtrip() -> None:
             assert len(stored_settlements) == 1
             assert stored_settlements[0].settlement == settlement
             assert settlement_repository.settled_epoch_indexes() == {3}
+            assert settlement_repository.total_distributed_node_reward_chipbits() == 5_000_000_000
         finally:
             connection.close()
