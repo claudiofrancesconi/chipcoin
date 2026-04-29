@@ -68,6 +68,7 @@ class SessionHandle:
     protocol: PeerProtocol
     outbound: bool
     endpoint: OutboundPeer | None = None
+    reusable_endpoint: bool = False
     announced_inventory_counts: dict[tuple[str, str], int] = field(default_factory=dict)
     consecutive_ping_failures: int = 0
     last_activity_at: float = 0.0
@@ -859,6 +860,7 @@ class NodeRuntime:
                             canonical_endpoint.port,
                         )
                     handle.endpoint = canonical_endpoint
+                    handle.reusable_endpoint = True
                     endpoint = canonical_endpoint
                     observation_direction = None
                     endpoint_reusable = True
@@ -1644,7 +1646,11 @@ class NodeRuntime:
             self.service.record_peer_observation(
                 host=endpoint.host,
                 port=endpoint.port,
-                direction=None if handle is None else ("outbound" if handle.outbound else "inbound"),
+                direction=(
+                    None
+                    if handle is None or handle.reusable_endpoint
+                    else ("outbound" if handle.outbound else "inbound")
+                ),
                 handshake_complete=False,
                 last_known_height=None if remote is None else remote.start_height,
                 node_id=None if remote is None else remote.node_id,
@@ -1818,8 +1824,6 @@ class NodeRuntime:
             return None
         canonical = OutboundPeer(endpoint.host, get_network_config(self.service.network).default_p2p_port)
         existing = self._known_peer_info(canonical.host, canonical.port)
-        if existing is None:
-            return None
         if existing is not None and existing.node_id is not None and node_id is not None and existing.node_id != node_id:
             return None
         return canonical

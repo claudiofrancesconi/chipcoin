@@ -130,7 +130,7 @@ def test_runtime_canonicalizes_public_inbound_peer_to_known_default_p2p_port() -
         assert canonical == OutboundPeer("188.218.213.92", 18444)
 
 
-def test_runtime_does_not_canonicalize_unknown_public_inbound_peer() -> None:
+def test_runtime_canonicalizes_unknown_public_inbound_peer_to_default_p2p_port() -> None:
     with TemporaryDirectory() as tempdir:
         service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")
         runtime = NodeRuntime(service=service, listen_host="0.0.0.0", listen_port=18444)
@@ -141,7 +141,7 @@ def test_runtime_does_not_canonicalize_unknown_public_inbound_peer() -> None:
             node_id="mac-node-id",
         )
 
-        assert canonical is None
+        assert canonical == OutboundPeer("188.218.213.92", 18444)
 
 
 def test_runtime_does_not_canonicalize_public_inbound_peer_when_canonical_endpoint_belongs_to_other_node_id() -> None:
@@ -178,7 +178,7 @@ def test_runtime_does_not_canonicalize_private_inbound_peer() -> None:
         assert canonical is None
 
 
-def test_runtime_persists_unknown_public_inbound_peer_on_observed_endpoint() -> None:
+def test_runtime_persists_unknown_public_inbound_peer_on_canonical_endpoint() -> None:
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:
             service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")
@@ -219,15 +219,25 @@ def test_runtime_persists_unknown_public_inbound_peer_on_observed_endpoint() -> 
             peers = service.list_peers()
             assert any(
                 peer.host == "188.218.213.92"
-                and peer.port == 56693
+                and peer.port == 18444
                 and peer.node_id == "mac-node-id"
-                and peer.direction == "inbound"
+                and peer.direction is None
+                and peer.source == "discovered"
+                and peer.success_count == 1
                 for peer in peers
             )
-            assert not any(peer.host == "188.218.213.92" and peer.port == 18444 for peer in peers)
-            assert runtime._desired_outbound_peers() == []
-            observed_peer = next(peer for peer in peers if peer.host == "188.218.213.92" and peer.port == 56693)
-            assert runtime._is_advertisable_peer(observed_peer) is False
+            assert not any(peer.host == "188.218.213.92" and peer.port == 56693 for peer in peers)
+            assert runtime._desired_outbound_peers() == [OutboundPeer("188.218.213.92", 18444)]
+            observed_peer = next(peer for peer in peers if peer.host == "188.218.213.92" and peer.port == 18444)
+            assert runtime._is_advertisable_peer(observed_peer) is True
+
+            await runtime._drop_session(session)
+
+            dropped_peer = next(
+                peer for peer in service.list_peers() if peer.host == "188.218.213.92" and peer.port == 18444
+            )
+            assert dropped_peer.direction is None
+            assert runtime._desired_outbound_peers() == [OutboundPeer("188.218.213.92", 18444)]
 
     asyncio.run(scenario())
 
@@ -347,8 +357,9 @@ def test_runtime_does_not_promote_new_ephemeral_inbound_alias_for_same_node_id(c
                 await runtime._on_handshake_complete(second)
 
             peers = service.list_peers()
-            assert any(peer.host == "188.217.94.86" and peer.port == 43336 and peer.node_id == "tobia-miner-id" for peer in peers)
-            assert ("188.217.94.86", 41914, "tobia-miner-id") in first_peers
+            assert any(peer.host == "188.217.94.86" and peer.port == 18444 and peer.node_id == "tobia-miner-id" for peer in peers)
+            assert ("188.217.94.86", 18444, "tobia-miner-id") in first_peers
+            assert not any(peer.host == "188.217.94.86" and peer.port in {41914, 43336} for peer in peers)
             assert "removed peer alias node_id=tobia-miner-id" not in caplog.text
 
     asyncio.run(scenario())
