@@ -1187,6 +1187,14 @@ class NodeService:
             None,
         )
         now = self.time_provider()
+        successful_observation = handshake_complete is True and last_success is not None and last_error is None
+        if successful_observation:
+            # A successful handshake supersedes transient connection failures for this endpoint.
+            failure_count = 0 if failure_count is None else failure_count
+            reconnect_attempts = 0 if reconnect_attempts is None else reconnect_attempts
+            backoff_until = 0 if backoff_until is None else backoff_until
+            previous_score = 0 if existing is None or existing.score is None else existing.score
+            score = max(1, previous_score if score is None else score)
         peer = PeerInfo(
             host=host,
             port=port,
@@ -1218,6 +1226,10 @@ class NodeService:
             last_penalty_reason=last_penalty_reason,
             last_penalty_at=last_penalty_at,
         )
+        if successful_observation and existing is not None:
+            self.peerbook.remove(existing)
+            if self.peer_repository is not None:
+                self.peer_repository.remove(host=host, port=port, network=self.network)
         self.peerbook.add(peer)
         if self.peer_repository is not None:
             self.peer_repository.observe(peer)

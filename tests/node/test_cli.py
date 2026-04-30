@@ -909,6 +909,56 @@ def test_cli_peer_summary_ignores_backoff_alias_when_node_has_operational_record
         }
 
 
+def test_cli_peer_success_clears_transient_failure_state() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.record_peer_observation(
+            host="188.217.94.86",
+            port=8333,
+            source="discovered",
+            direction="outbound",
+            handshake_complete=True,
+            node_id="peer-a",
+            last_success=1_700_000_010,
+            success_count=3,
+            last_failure=1_700_000_020,
+            failure_count=24,
+            score=-99,
+            reconnect_attempts=5,
+            backoff_until=9_999_999_999,
+            last_error="[Errno 111] Connect call failed ('188.217.94.86', 8333)",
+            last_error_at=1_700_000_020,
+            protocol_error_class="connection_failed",
+            last_known_height=3092,
+        )
+        service.record_peer_observation(
+            host="188.217.94.86",
+            port=8333,
+            source="discovered",
+            direction="outbound",
+            handshake_complete=True,
+            node_id="peer-a",
+            last_success=1_700_000_030,
+            success_count=4,
+            last_known_height=3097,
+            last_error=None,
+            protocol_error_class=None,
+        )
+
+        code, payload = _run_cli(["--data", str(db_path), "list-peers"])
+
+        assert code == 0
+        assert payload[0]["peer_state"] == "good"
+        assert payload[0]["last_error"] is None
+        assert payload[0]["last_error_at"] is None
+        assert payload[0]["protocol_error_class"] is None
+        assert payload[0]["failure_count"] == 0
+        assert payload[0]["score"] == 1
+        assert payload[0]["reconnect_attempts"] == 0
+        assert payload[0]["backoff_until"] == 0
+
+
 def test_cli_run_emits_warning_for_empty_peerbook_and_no_peers(caplog) -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
