@@ -743,6 +743,10 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--peer-stale-after-seconds", type=int, default=604800)
     run_parser.add_argument("--peer-retry-backoff-base-seconds", type=float, default=1.0)
     run_parser.add_argument("--peer-retry-backoff-max-seconds", type=float, default=30.0)
+    run_parser.add_argument("--max-outbound-sessions", type=int, default=8)
+    run_parser.add_argument("--max-inbound-sessions", type=int, default=32)
+    run_parser.add_argument("--inbound-handshake-rate-limit-per-minute", type=int, default=12)
+    run_parser.add_argument("--min-stable-session-seconds", type=float, default=30.0)
     run_parser.add_argument("--peer-discovery-startup-prefer-persisted", type=_parse_bool, default=True)
     run_parser.add_argument("--headers-sync-enabled", type=_parse_bool, default=True)
     run_parser.add_argument("--headers-max-per-message", type=int, default=2000)
@@ -1398,6 +1402,10 @@ async def _run_runtime(service: NodeService, args) -> None:
         peer_stale_after_seconds=getattr(args, "peer_stale_after_seconds", 604800),
         peer_retry_backoff_base_seconds=getattr(args, "peer_retry_backoff_base_seconds", 1.0),
         peer_retry_backoff_max_seconds=getattr(args, "peer_retry_backoff_max_seconds", 30.0),
+        max_outbound_sessions=getattr(args, "max_outbound_sessions", 8),
+        max_inbound_sessions=getattr(args, "max_inbound_sessions", 32),
+        inbound_handshake_rate_limit_per_minute=getattr(args, "inbound_handshake_rate_limit_per_minute", 12),
+        min_stable_session_seconds=getattr(args, "min_stable_session_seconds", 30.0),
         peer_discovery_startup_prefer_persisted=getattr(args, "peer_discovery_startup_prefer_persisted", True),
         headers_sync_enabled=getattr(args, "headers_sync_enabled", True),
         max_headers_per_message=getattr(args, "headers_max_per_message", 2000),

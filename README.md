@@ -362,6 +362,10 @@ Peer discovery defaults in `.env.example`:
 - `PEER_STALE_AFTER_SECONDS=604800`
 - `PEER_RETRY_BACKOFF_BASE_SECONDS=1`
 - `PEER_RETRY_BACKOFF_MAX_SECONDS=30`
+- `MAX_OUTBOUND_SESSIONS=8`
+- `MAX_INBOUND_SESSIONS=32`
+- `INBOUND_HANDSHAKE_RATE_LIMIT_PER_MINUTE=12`
+- `MIN_STABLE_SESSION_SECONDS=30`
 - `PEER_DISCOVERY_STARTUP_PREFER_PERSISTED=true`
 
 After a node has learned the network, the persisted peerbook becomes the primary reconnection source. Manual peers and bootstrap-derived seed peers remain supported, but are treated as fallback startup inputs when healthy persisted peers already exist.

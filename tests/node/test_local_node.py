@@ -1643,6 +1643,120 @@ def test_connect_loop_does_not_overlap_outbound_dials() -> None:
     asyncio.run(scenario())
 
 
+def test_connect_loop_respects_max_outbound_session_budget() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(
+                service=service,
+                listen_host="127.0.0.1",
+                listen_port=18445,
+                connect_interval=0.01,
+                max_outbound_sessions=2,
+            )
+            peers = [
+                OutboundPeer("173.212.193.13", 18444),
+                OutboundPeer("188.217.94.86", 18444),
+                OutboundPeer("188.218.213.92", 18444),
+            ]
+            runtime._running = True
+            attempts: list[str] = []
+
+            runtime._desired_outbound_peers = lambda: peers  # type: ignore[method-assign]
+            runtime._is_peer_currently_banned = lambda *_args, **_kwargs: False  # type: ignore[method-assign]
+            runtime._is_backoff_active = lambda *_args, **_kwargs: False  # type: ignore[method-assign]
+
+            async def connect(_peer: OutboundPeer) -> None:
+                attempts.append(f"{_peer.host}:{_peer.port}")
+                if len(attempts) >= 2:
+                    runtime._running = False
+
+            runtime._connect_outbound = connect  # type: ignore[method-assign]
+
+            await runtime._connect_loop()
+
+            assert attempts == [
+                "173.212.193.13:18444",
+                "188.217.94.86:18444",
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_runtime_rate_limits_repeated_inbound_handshakes_from_same_host() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(
+                service=service,
+                listen_host="127.0.0.1",
+                listen_port=18445,
+                inbound_handshake_rate_limit_per_minute=2,
+            )
+            runtime._running = True
+            assert runtime._inbound_rate_limited("198.51.100.10") is False
+            assert runtime._inbound_rate_limited("198.51.100.10") is False
+            assert runtime._inbound_rate_limited("198.51.100.10") is True
+
+    asyncio.run(scenario())
+
+
+def test_runtime_skips_sync_when_peer_height_is_not_ahead() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            mined = _mine_block(service.build_candidate_block("CHCminer").block)
+            service.apply_block(mined)
+            local_height = service.chain_tip().height
+            runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+
+            class _State:
+                closed = False
+                handshake_complete = True
+                remote_version = type("_Remote", (), {"node_id": "peer-a", "start_height": local_height})()
+                errors: list[str] = []
+                error_causes: list[Exception] = []
+
+            class _Session:
+                inbound = False
+                state = _State()
+
+                async def close(self, *, reason: str = "", error=None) -> None:
+                    self.state.closed = True
+
+                async def send_message(self, _message) -> None:
+                    pass
+
+            session = _Session()
+            requested: list[str] = []
+
+            async def request_headers(*_args, **_kwargs) -> None:
+                requested.append("headers")
+
+            async def drive_header_sync() -> None:
+                requested.append("drive")
+
+            async def noop(*_args, **_kwargs) -> None:
+                return None
+
+            runtime._sessions[session] = SessionHandle(  # type: ignore[arg-type]
+                protocol=session,  # type: ignore[arg-type]
+                outbound=True,
+                endpoint=OutboundPeer("node-a", 18444),
+                opened_at=1.0,
+            )
+            runtime._request_headers = request_headers  # type: ignore[method-assign]
+            runtime._drive_header_sync = drive_header_sync  # type: ignore[method-assign]
+            runtime._send_known_peers = noop  # type: ignore[method-assign]
+            runtime._announce_current_mempool = noop  # type: ignore[method-assign]
+
+            await runtime._on_handshake_complete(session)  # type: ignore[arg-type]
+
+            assert requested == []
+
+    asyncio.run(scenario())
+
+
 def test_runtime_rejects_invalid_headers_message(monkeypatch) -> None:
     class _FakeSessionState:
         closed = False

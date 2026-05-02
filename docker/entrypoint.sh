@@ -354,6 +354,10 @@ run_node() {
     --peer-stale-after-seconds "${PEER_STALE_AFTER_SECONDS:-604800}" \
     --peer-retry-backoff-base-seconds "${PEER_RETRY_BACKOFF_BASE_SECONDS:-1}" \
     --peer-retry-backoff-max-seconds "${PEER_RETRY_BACKOFF_MAX_SECONDS:-30}" \
+    --max-outbound-sessions "${MAX_OUTBOUND_SESSIONS:-8}" \
+    --max-inbound-sessions "${MAX_INBOUND_SESSIONS:-32}" \
+    --inbound-handshake-rate-limit-per-minute "${INBOUND_HANDSHAKE_RATE_LIMIT_PER_MINUTE:-12}" \
+    --min-stable-session-seconds "${MIN_STABLE_SESSION_SECONDS:-30}" \
     --peer-discovery-startup-prefer-persisted "${PEER_DISCOVERY_STARTUP_PREFER_PERSISTED:-true}" \
     --headers-sync-enabled "${HEADERS_SYNC_ENABLED:-true}" \
     --headers-max-per-message "${HEADERS_MAX_PER_MESSAGE:-2000}" \

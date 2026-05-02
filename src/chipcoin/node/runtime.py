@@ -84,6 +84,7 @@ class SessionHandle:
     last_block_progress_at: float = 0.0
     addr_relay_window_started_at: float = 0.0
     addr_relay_entries_sent: int = 0
+    opened_at: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -190,6 +191,10 @@ class NodeRuntime:
         peer_stale_after_seconds: int = 604800,
         peer_retry_backoff_base_seconds: float = 1.0,
         peer_retry_backoff_max_seconds: float = 30.0,
+        max_outbound_sessions: int = 8,
+        max_inbound_sessions: int = 32,
+        inbound_handshake_rate_limit_per_minute: int = 12,
+        min_stable_session_seconds: float = 30.0,
         peer_discovery_startup_prefer_persisted: bool = True,
         misbehavior_warning_threshold: int = 25,
         misbehavior_disconnect_threshold: int = 50,
@@ -231,6 +236,10 @@ class NodeRuntime:
         self.peer_stale_after_seconds = max(60, peer_stale_after_seconds)
         self.peer_retry_backoff_base_seconds = max(0.5, peer_retry_backoff_base_seconds)
         self.peer_retry_backoff_max_seconds = max(1.0, peer_retry_backoff_max_seconds)
+        self.max_outbound_sessions = max(1, max_outbound_sessions)
+        self.max_inbound_sessions = max(1, max_inbound_sessions)
+        self.inbound_handshake_rate_limit_per_minute = max(1, inbound_handshake_rate_limit_per_minute)
+        self.min_stable_session_seconds = max(1.0, min_stable_session_seconds)
         self.peer_discovery_startup_prefer_persisted = peer_discovery_startup_prefer_persisted
         self.misbehavior_warning_threshold = max(1, misbehavior_warning_threshold)
         self.misbehavior_disconnect_threshold = max(
@@ -274,6 +283,7 @@ class NodeRuntime:
         self._reward_attest_wallet = None if reward_automation is None else _load_wallet_key(reward_automation.attest_wallet_path)
         self._reward_submitted_renewal_epochs: set[int] = set()
         self._reward_submitted_attestation_identities: set[tuple[int, int, str, str]] = set()
+        self._inbound_handshake_attempts_by_host: dict[str, list[float]] = {}
 
     @property
     def bound_port(self) -> int:
@@ -687,11 +697,52 @@ class NodeRuntime:
 
         return sum(1 for session in self._sessions if session.state.handshake_complete and not session.state.closed)
 
+    def _active_outbound_session_count(self) -> int:
+        """Return active outbound session count."""
+
+        return sum(
+            1
+            for session, handle in self._sessions.items()
+            if handle.outbound and not session.state.closed
+        )
+
+    def _active_inbound_session_count(self) -> int:
+        """Return active inbound session count."""
+
+        return sum(
+            1
+            for session, handle in self._sessions.items()
+            if not handle.outbound and not session.state.closed
+        )
+
+    def _inbound_rate_limited(self, host: str) -> bool:
+        """Return whether one inbound host exceeded the handshake attempt budget."""
+
+        now = asyncio.get_running_loop().time()
+        window_start = now - 60.0
+        attempts = [
+            timestamp
+            for timestamp in self._inbound_handshake_attempts_by_host.get(host, [])
+            if timestamp >= window_start
+        ]
+        if len(attempts) >= self.inbound_handshake_rate_limit_per_minute:
+            self._inbound_handshake_attempts_by_host[host] = attempts
+            return True
+        attempts.append(now)
+        self._inbound_handshake_attempts_by_host[host] = attempts
+        return False
+
     async def _connect_loop(self) -> None:
         """Keep outbound peer connections alive."""
 
         while self._running:
+            remaining_dials = max(
+                0,
+                self.max_outbound_sessions - self._active_outbound_session_count() - len(self._pending_outbound_peers),
+            )
             for peer in list(self._desired_outbound_peers()):
+                if remaining_dials <= 0:
+                    break
                 if self._has_active_endpoint(peer):
                     continue
                 if self._is_peer_currently_banned(peer.host, peer.port):
@@ -711,9 +762,11 @@ class NodeRuntime:
                 try:
                     self._pending_outbound_peers.add(peer)
                     await self._connect_outbound(peer)
+                    remaining_dials -= 1
                 except Exception as exc:
                     self.logger.debug("outbound connect failed peer=%s:%s error=%s", peer.host, peer.port, exc)
                     self._register_peer_failure(peer, error=exc, penalty=20)
+                    remaining_dials -= 1
                 finally:
                     self._pending_outbound_peers.discard(peer)
             await asyncio.sleep(self.connect_interval)
@@ -759,7 +812,17 @@ class NodeRuntime:
 
         transport = TCPTransport(reader, writer, read_timeout=self.read_timeout, write_timeout=self.write_timeout)
         endpoint = transport.peer_endpoint()
-        self.logger.info("inbound connection accepted peer=%s:%s", endpoint.host, endpoint.port)
+        if self._active_inbound_session_count() >= self.max_inbound_sessions:
+            self.logger.debug("inbound connection rejected peer=%s:%s reason=inbound_session_limit", endpoint.host, endpoint.port)
+            writer.close()
+            await writer.wait_closed()
+            return
+        if self._inbound_rate_limited(endpoint.host):
+            self.logger.debug("inbound connection rejected peer=%s:%s reason=host_rate_limited", endpoint.host, endpoint.port)
+            writer.close()
+            await writer.wait_closed()
+            return
+        self.logger.debug("inbound connection accepted peer=%s:%s", endpoint.host, endpoint.port)
         if self._is_peer_currently_banned(endpoint.host, endpoint.port):
             self.logger.info("inbound connection rejected peer=%s:%s reason=temporary_ban", endpoint.host, endpoint.port)
             writer.close()
@@ -773,7 +836,11 @@ class NodeRuntime:
             on_message=self._on_peer_message,
             on_handshake_complete=self._on_handshake_complete,
         )
-        self._sessions[session] = SessionHandle(protocol=session, outbound=False)
+        self._sessions[session] = SessionHandle(
+            protocol=session,
+            outbound=False,
+            opened_at=asyncio.get_running_loop().time(),
+        )
         self._spawn_task(self._run_session(session), "inbound-session")
 
     async def _connect_outbound(self, peer: OutboundPeer) -> None:
@@ -795,7 +862,12 @@ class NodeRuntime:
             on_message=self._on_peer_message,
             on_handshake_complete=self._on_handshake_complete,
         )
-        self._sessions[session] = SessionHandle(protocol=session, outbound=True, endpoint=peer)
+        self._sessions[session] = SessionHandle(
+            protocol=session,
+            outbound=True,
+            endpoint=peer,
+            opened_at=asyncio.get_running_loop().time(),
+        )
         self.logger.info("outbound TCP connected peer=%s:%s", peer.host, peer.port)
         self._spawn_task(self._run_session(session), f"outbound-{peer.host}:{peer.port}")
 
@@ -899,18 +971,28 @@ class NodeRuntime:
                 "inbound" if session.inbound else "outbound",
                 remote.start_height,
             )
-            self.logger.info(
-                "sync start peer=%s node_id=%s remote_height=%s local_height=%s",
-                self._format_peer_for_logs(session),
-                remote.node_id,
-                remote.start_height,
-                0 if self.service.chain_tip() is None else self.service.chain_tip().height,
-            )
-            self._begin_sync_tracking(session, remote.start_height)
-            if self.headers_sync_enabled:
-                await self._drive_header_sync()
+            local_height = 0 if self.service.chain_tip() is None else self.service.chain_tip().height
+            if remote.start_height > local_height:
+                self.logger.info(
+                    "sync start peer=%s node_id=%s remote_height=%s local_height=%s",
+                    self._format_peer_for_logs(session),
+                    remote.node_id,
+                    remote.start_height,
+                    local_height,
+                )
+                self._begin_sync_tracking(session, remote.start_height)
+                if self.headers_sync_enabled:
+                    await self._drive_header_sync()
+                else:
+                    await self._request_headers(session)
             else:
-                await self._request_headers(session)
+                self.logger.debug(
+                    "sync skipped peer=%s node_id=%s remote_height=%s local_height=%s",
+                    self._format_peer_for_logs(session),
+                    remote.node_id,
+                    remote.start_height,
+                    local_height,
+                )
             await self._send_known_peers(session)
             await self._announce_current_mempool(session)
             self._update_sync_status()
@@ -1635,7 +1717,15 @@ class NodeRuntime:
             current_error_obj = None if not session.state.error_causes else session.state.error_causes[-1]
             penalty = 0 if current_error is None else self._penalty_for_error(current_error_obj or current_error)
             outbound_pre_handshake = handle is not None and handle.outbound and not session.state.handshake_complete
-            if outbound_pre_handshake:
+            outbound_short_lived_error = (
+                handle is not None
+                and handle.outbound
+                and session.state.handshake_complete
+                and current_error is not None
+                and handle.opened_at > 0
+                and (asyncio.get_running_loop().time() - handle.opened_at) < self.min_stable_session_seconds
+            )
+            if outbound_pre_handshake or outbound_short_lived_error:
                 reconnect_attempts, backoff_until = self._next_backoff_state(existing)
             else:
                 reconnect_attempts = None if existing is None else existing.reconnect_attempts
