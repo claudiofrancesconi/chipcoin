@@ -54,7 +54,7 @@ from ..consensus.economics import (
     subsidy_split_chipbits,
     total_subsidy_through_height,
 )
-from ..consensus.utxo import InMemoryUtxoView
+from ..consensus.utxo import InMemoryUtxoView, OverlayUtxoView
 from ..consensus.validation import ValidationContext, ValidationError, block_weight_units, is_coinbase_transaction, validate_block
 from ..storage.blocks import SQLiteBlockRepository
 from ..storage.chainstate import SQLiteChainStateRepository
@@ -703,7 +703,7 @@ class NodeService:
             if tip_record is not None and tip_record.cumulative_work is not None:
                 previous_cumulative_work = tip_record.cumulative_work
 
-        snapshot = InMemoryUtxoView.from_entries(self.chainstate.list_utxos())
+        snapshot = OverlayUtxoView(self.chainstate)
         context = ValidationContext(
             height=height,
             median_time_past=0 if tip is None else self.headers.get(tip.block_hash).timestamp,

@@ -9,7 +9,7 @@ from ..consensus.models import Transaction
 from ..consensus.serialization import serialize_transaction
 from ..consensus.epoch_settlement import REWARD_ATTESTATION_BUNDLE_KIND, REWARD_SETTLE_EPOCH_KIND
 from ..consensus.nodes import is_special_node_transaction
-from ..consensus.utxo import InMemoryUtxoView
+from ..consensus.utxo import OverlayUtxoView, UtxoView
 from ..consensus.validation import ValidationError, is_coinbase_transaction, validate_transaction
 from ..crypto.addresses import is_valid_address
 from ..storage.chainstate import ChainStateRepository
@@ -109,10 +109,10 @@ class MempoolManager:
 
         self.repository.clear()
 
-    def _snapshot_with_mempool_applied(self) -> InMemoryUtxoView:
+    def _snapshot_with_mempool_applied(self) -> UtxoView:
         """Build an in-memory chainstate snapshot with current mempool transactions applied."""
 
-        view = InMemoryUtxoView.from_entries(self.chainstate.list_utxos())
+        view = OverlayUtxoView(self.chainstate)
         next_height = self.validation_context_factory(view).height
         for entry in self.repository.list_all():
             view.apply_transaction(entry.transaction, next_height)
