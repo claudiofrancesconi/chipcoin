@@ -731,12 +731,14 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--peer", action="append", default=[], help="Outbound peer in host:port form.")
     run_parser.add_argument("--peer-source", choices=("manual", "seed"), default="manual")
     run_parser.add_argument("--run-seconds", type=float, default=None, help="Stop automatically after N seconds.")
+    run_parser.add_argument("--connect-interval-seconds", type=float, default=1.0)
     run_parser.add_argument("--ping-interval-seconds", type=float, default=2.0)
     run_parser.add_argument("--read-timeout-seconds", type=float, default=15.0)
     run_parser.add_argument("--write-timeout-seconds", type=float, default=15.0)
     run_parser.add_argument("--handshake-timeout-seconds", type=float, default=5.0)
     run_parser.add_argument("--mempool-relay-interval-seconds", type=float, default=1.0)
     run_parser.add_argument("--sync-scheduler-interval-seconds", type=float, default=1.0)
+    run_parser.add_argument("--peer-resolution-cache-ttl-seconds", type=int, default=300)
     run_parser.add_argument("--peer-discovery-enabled", type=_parse_bool, default=True)
     run_parser.add_argument("--peerbook-max-size", type=int, default=1024)
     run_parser.add_argument("--peer-addr-max-per-message", type=int, default=250)
@@ -1392,12 +1394,14 @@ async def _run_runtime(service: NodeService, args) -> None:
         listen_host=args.listen_host,
         listen_port=network_config.default_p2p_port if args.listen_port is None else args.listen_port,
         outbound_peers=peers,
+        connect_interval=float(getattr(args, "connect_interval_seconds", 1.0)),
         ping_interval=float(getattr(args, "ping_interval_seconds", 2.0)),
         read_timeout=float(getattr(args, "read_timeout_seconds", 15.0)),
         write_timeout=float(getattr(args, "write_timeout_seconds", 15.0)),
         handshake_timeout=float(getattr(args, "handshake_timeout_seconds", 5.0)),
         mempool_relay_interval=float(getattr(args, "mempool_relay_interval_seconds", 1.0)),
         sync_scheduler_interval=float(getattr(args, "sync_scheduler_interval_seconds", 1.0)),
+        peer_resolution_cache_ttl_seconds=getattr(args, "peer_resolution_cache_ttl_seconds", 300),
         peer_discovery_enabled=getattr(args, "peer_discovery_enabled", True),
         peerbook_max_size=getattr(args, "peerbook_max_size", 1024),
         peer_addr_max_per_message=getattr(args, "peer_addr_max_per_message", 250),

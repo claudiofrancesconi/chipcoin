@@ -172,6 +172,7 @@ class NodeRuntime:
         handshake_timeout: float = 5.0,
         mempool_relay_interval: float = 1.0,
         sync_scheduler_interval: float = 1.0,
+        peer_resolution_cache_ttl_seconds: int = 300,
         max_connect_backoff_seconds: float = 30.0,
         max_consecutive_ping_failures: int = 3,
         max_inventory_items: int = 500,
@@ -218,6 +219,7 @@ class NodeRuntime:
         self.ping_interval = ping_interval if ping_interval < read_timeout else max(0.5, read_timeout / 2)
         self.mempool_relay_interval = max(0.1, mempool_relay_interval)
         self.sync_scheduler_interval = max(0.1, sync_scheduler_interval)
+        self.peer_resolution_cache_ttl_seconds = max(1, peer_resolution_cache_ttl_seconds)
         self.max_connect_backoff_seconds = max(1.0, max_connect_backoff_seconds)
         self.max_consecutive_ping_failures = max(1, max_consecutive_ping_failures)
         self.max_inventory_items = max_inventory_items
@@ -286,6 +288,7 @@ class NodeRuntime:
         self._reward_submitted_renewal_epochs: set[int] = set()
         self._reward_submitted_attestation_identities: set[tuple[int, int, str, str]] = set()
         self._inbound_handshake_attempts_by_host: dict[str, list[float]] = {}
+        self._peer_resolution_cache: dict[OutboundPeer, tuple[int, set[str]]] = {}
 
     @property
     def bound_port(self) -> int:
@@ -2037,13 +2040,22 @@ class NodeRuntime:
         try:
             address = ipaddress.ip_address(peer.host)
         except ValueError:
+            now = self.service.time_provider()
+            cached = self._peer_resolution_cache.get(peer)
+            if cached is not None:
+                cached_at, cached_ips = cached
+                if now - cached_at < self.peer_resolution_cache_ttl_seconds:
+                    return set(cached_ips)
             try:
-                return {
+                resolved = {
                     addrinfo[4][0]
                     for addrinfo in socket.getaddrinfo(peer.host, peer.port, type=socket.SOCK_STREAM)
                     if addrinfo[4]
                 }
+                self._peer_resolution_cache[peer] = (now, resolved)
+                return set(resolved)
             except OSError:
+                self._peer_resolution_cache[peer] = (now, set())
                 return set()
         return {str(address)}
 

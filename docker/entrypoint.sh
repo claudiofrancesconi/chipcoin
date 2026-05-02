@@ -342,12 +342,14 @@ run_node() {
     --listen-port "${NODE_P2P_BIND_PORT}" \
     --http-host 0.0.0.0 \
     --http-port "${NODE_HTTP_BIND_PORT}" \
+    --connect-interval-seconds "${CONNECT_INTERVAL_SECONDS:-5.0}" \
     --ping-interval-seconds "${PING_INTERVAL_SECONDS:-2.0}" \
     --read-timeout-seconds "${P2P_READ_TIMEOUT_SECONDS:-15.0}" \
     --write-timeout-seconds "${P2P_WRITE_TIMEOUT_SECONDS:-15.0}" \
     --handshake-timeout-seconds "${P2P_HANDSHAKE_TIMEOUT_SECONDS:-5.0}" \
     --mempool-relay-interval-seconds "${MEMPOOL_RELAY_INTERVAL_SECONDS:-1.0}" \
     --sync-scheduler-interval-seconds "${SYNC_SCHEDULER_INTERVAL_SECONDS:-1.0}" \
+    --peer-resolution-cache-ttl-seconds "${PEER_RESOLUTION_CACHE_TTL_SECONDS:-300}" \
     --peer-discovery-enabled "${PEER_DISCOVERY_ENABLED:-true}" \
     --peerbook-max-size "${PEERBOOK_MAX_SIZE:-1024}" \
     --peer-addr-max-per-message "${PEER_ADDR_MAX_PER_MESSAGE:-250}" \
