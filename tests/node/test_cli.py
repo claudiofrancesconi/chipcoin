@@ -909,6 +909,43 @@ def test_cli_peer_summary_ignores_backoff_alias_when_node_has_operational_record
         }
 
 
+def test_cli_peer_summary_keeps_connected_peer_operational_when_height_is_stale() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.record_peer_observation(
+            host="188.217.94.86",
+            port=8333,
+            source="discovered",
+            direction="outbound",
+            handshake_complete=True,
+            node_id="peer-a",
+            last_success=1_700_000_100,
+            success_count=1,
+            score=1,
+            last_known_height=4160,
+        )
+        service.record_peer_observation(
+            host="173.212.193.13",
+            port=8333,
+            source="discovered",
+            direction="outbound",
+            handshake_complete=False,
+            node_id="peer-b",
+            last_success=1_700_000_110,
+            success_count=1,
+            score=1,
+            last_known_height=4204,
+        )
+
+        code, payload = _run_cli(["--data", str(db_path), "peer-summary"])
+
+        assert code == 0
+        assert payload["operational_peer_count"] == 2
+        assert payload["canonical_peer_count"] == 2
+        assert payload["operator_summary"]["peer_health"] == "ok"
+
+
 def test_cli_peer_success_clears_transient_failure_state() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"

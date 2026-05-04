@@ -207,6 +207,13 @@ def _is_benign_peer_error(error: object) -> bool:
 def _is_fresh_peer_record(peer: dict[str, object], *, tip_height: int) -> bool:
     """Return whether a peer record is close enough to the freshest observed peer height."""
 
+    if (
+        peer.get("handshake_complete") is True
+        and peer.get("peer_state") == "good"
+        and peer.get("banned") is not True
+        and _is_benign_peer_error(peer.get("last_error"))
+    ):
+        return True
     height = peer.get("last_known_height")
     return isinstance(height, int) and (tip_height <= 0 or height >= tip_height - 20)
 
