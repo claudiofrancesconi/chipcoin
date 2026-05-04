@@ -30,6 +30,11 @@ class PeerRepository:
 
         raise NotImplementedError
 
+    def reset_session_state(self, *, network: str) -> None:
+        """Mark persisted peer sessions as disconnected for one network."""
+
+        raise NotImplementedError
+
 
 class SQLitePeerRepository(PeerRepository):
     """SQLite-backed repository for peer endpoints."""
@@ -257,4 +262,19 @@ class SQLitePeerRepository(PeerRepository):
             self.connection.execute(
                 "DELETE FROM peers WHERE host = ? AND port = ? AND network = ?",
                 (host, port, network),
+            )
+
+    def reset_session_state(self, *, network: str) -> None:
+        """Clear runtime-only session markers after a node process restart."""
+
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE peers
+                SET handshake_complete = 0,
+                    session_started_at = NULL
+                WHERE network = ?
+                  AND handshake_complete = 1
+                """,
+                (network,),
             )

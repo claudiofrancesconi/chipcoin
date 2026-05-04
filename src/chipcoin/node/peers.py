@@ -109,6 +109,42 @@ class PeerManager:
 
         self._peers.pop((peer.host, peer.port, peer.network), None)
 
+    def reset_session_state(self, *, network: str) -> None:
+        """Clear runtime-only session markers for one network."""
+
+        for key, peer in list(self._peers.items()):
+            if peer.network != network or peer.handshake_complete is not True:
+                continue
+            self._peers[key] = PeerInfo(
+                host=peer.host,
+                port=peer.port,
+                network=peer.network,
+                source=peer.source,
+                first_seen=peer.first_seen,
+                direction=peer.direction,
+                last_seen=peer.last_seen,
+                last_success=peer.last_success,
+                last_failure=peer.last_failure,
+                failure_count=peer.failure_count,
+                success_count=peer.success_count,
+                handshake_complete=False,
+                last_known_height=peer.last_known_height,
+                node_id=peer.node_id,
+                score=peer.score,
+                reconnect_attempts=peer.reconnect_attempts,
+                backoff_until=peer.backoff_until,
+                last_error=peer.last_error,
+                last_error_at=peer.last_error_at,
+                protocol_error_class=peer.protocol_error_class,
+                disconnect_count=peer.disconnect_count,
+                session_started_at=None,
+                misbehavior_score=peer.misbehavior_score,
+                misbehavior_last_updated_at=peer.misbehavior_last_updated_at,
+                ban_until=peer.ban_until,
+                last_penalty_reason=peer.last_penalty_reason,
+                last_penalty_at=peer.last_penalty_at,
+            )
+
     def list_all(self, *, network: str | None = None) -> list[PeerInfo]:
         """Return known peers, optionally filtered by network."""
 

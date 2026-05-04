@@ -313,6 +313,7 @@ class NodeRuntime:
             return
         configure_logging()
         self._event_loop = asyncio.get_running_loop()
+        self.service.reset_peer_session_state()
         self._server = await asyncio.start_server(self._handle_inbound_connection, self.listen_host, self.listen_port)
         self._start_http_api_server()
         self._running = True

@@ -1,6 +1,7 @@
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 import asyncio
 import logging
 
@@ -388,6 +389,59 @@ def test_runtime_reuses_canonicalized_public_peer_after_restart() -> None:
 
         assert OutboundPeer("188.218.213.92", 18444) in desired
         assert OutboundPeer("tiltmediaconsulting.com", 18444) in desired
+
+
+def test_runtime_start_clears_persisted_handshake_session_state() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            database_path = Path(tempdir) / "chipcoin-devnet.sqlite3"
+            service = NodeService.open_sqlite(
+                database_path,
+                network="devnet",
+                time_provider=lambda: 1_700_000_020,
+            )
+            service.record_peer_observation(
+                host="188.217.94.86",
+                port=18444,
+                source="discovered",
+                direction="outbound",
+                handshake_complete=True,
+                last_success=1_700_000_010,
+                last_known_height=4148,
+                node_id="tobia-node-id",
+                session_started_at=1_700_000_010,
+            )
+            runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445, http_port=None)
+
+            class _FakeSocket:
+                def getsockname(self):
+                    return ("127.0.0.1", 18445)
+
+            class _FakeServer:
+                sockets = [_FakeSocket()]
+
+                def close(self) -> None:
+                    pass
+
+                async def wait_closed(self) -> None:
+                    pass
+
+            async def _fake_start_server(*args, **kwargs):
+                return _FakeServer()
+
+            with patch("chipcoin.node.runtime.asyncio.start_server", new=_fake_start_server):
+                await runtime.start()
+                await runtime.stop()
+
+            restarted = NodeService.open_sqlite(database_path, network="devnet")
+            peer = next(peer for peer in restarted.list_peers() if peer.host == "188.217.94.86")
+            assert peer.handshake_complete is False
+            assert peer.session_started_at is None
+            assert peer.last_success == 1_700_000_010
+            assert peer.last_known_height == 4148
+            assert peer.node_id == "tobia-node-id"
+
+    asyncio.run(scenario())
 
 
 def test_runtime_logs_initial_peer_failures_at_info_then_suppresses_terminal_churn() -> None:

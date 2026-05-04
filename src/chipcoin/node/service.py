@@ -964,6 +964,13 @@ class NodeService:
             self.peerbook.add(peer)
         return self.peerbook.list_all(network=self.network)
 
+    def reset_peer_session_state(self) -> None:
+        """Clear runtime-only peer session flags after a node process restart."""
+
+        self.peerbook.reset_session_state(network=self.network)
+        if self.peer_repository is not None:
+            self.peer_repository.reset_session_state(network=self.network)
+
     def peer_diagnostics(self) -> list[dict[str, object]]:
         """Return deterministic peer diagnostics for CLI/debug output."""
 
