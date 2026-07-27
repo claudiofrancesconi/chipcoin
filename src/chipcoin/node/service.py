@@ -54,6 +54,7 @@ from ..consensus.economics import (
     miner_subsidy_chipbits,
     node_reward_pool_chipbits,
     renew_reward_node_fee_chipbits,
+    reward_fee_node_count,
     reward_registered_node_count,
     register_reward_node_fee_chipbits,
     REWARD_NODE_FEE_TARGET_COUNT,
@@ -2153,6 +2154,7 @@ class NodeService:
         registered_reward_node_count = reward_registered_node_count(registry_snapshot)
         tip = self.chain_tip()
         next_height = 0 if tip is None else tip.height + 1
+        fee_reward_node_count = reward_fee_node_count(registry_snapshot, height=next_height, params=self.params)
         active_reward_node_count = len(
             active_node_records(
                 registry_snapshot,
@@ -2161,19 +2163,21 @@ class NodeService:
             )
         )
         register_fee = register_reward_node_fee_chipbits(
-            registered_reward_node_count=registered_reward_node_count,
+            registered_reward_node_count=fee_reward_node_count,
             params=self.params,
         )
         renew_fee = renew_reward_node_fee_chipbits(
-            registered_reward_node_count=registered_reward_node_count,
+            registered_reward_node_count=fee_reward_node_count,
             params=self.params,
         )
         return {
             "policy_version": "registry_log_v1",
-            "driver": "registered_reward_node_count",
+            "driver": "fee_reward_node_count",
             "registered_reward_node_count": registered_reward_node_count,
+            "fee_reward_node_count": fee_reward_node_count,
             "active_reward_node_count": active_reward_node_count,
             "target_registered_reward_node_count": REWARD_NODE_FEE_TARGET_COUNT,
+            "target_fee_reward_node_count": REWARD_NODE_FEE_TARGET_COUNT,
             "register_fee_chipbits": register_fee,
             "register_fee_chc": _format_chipbits_as_chc(register_fee),
             "renew_fee_chipbits": renew_fee,
@@ -4068,7 +4072,7 @@ class NodeService:
             settled_epoch_indexes=settled_epoch_indexes,
             epoch_seed_by_index=self._epoch_seed_map(0 if tip is None else tip.height + 1),
             reward_fee_registry_count=(
-                reward_registered_node_count(registry_view)
+                reward_fee_node_count(registry_view, height=0 if tip is None else tip.height + 1, params=self.params)
                 if reward_fee_registry_count is None
                 else reward_fee_registry_count
             ),
@@ -4081,7 +4085,9 @@ class NodeService:
         if not is_special_node_transaction(candidate_transaction):
             return
         staged_registry = self.node_registry.snapshot()
-        fee_registry_count = reward_registered_node_count(staged_registry)
+        tip = self.headers.get_tip()
+        context_height = 0 if tip is None else tip.height + 1
+        fee_registry_count = reward_fee_node_count(staged_registry, height=context_height, params=self.params)
         context = self._validation_context_for_view(
             OverlayUtxoView(self.chainstate),
             node_registry_view=staged_registry,
@@ -4099,7 +4105,9 @@ class NodeService:
         """Drop special-node mempool entries that cannot validate in block order."""
 
         staged_registry = self.node_registry.snapshot()
-        fee_registry_count = reward_registered_node_count(staged_registry)
+        tip = self.headers.get_tip()
+        context_height = 0 if tip is None else tip.height + 1
+        fee_registry_count = reward_fee_node_count(staged_registry, height=context_height, params=self.params)
         context = self._validation_context_for_view(
             OverlayUtxoView(self.chainstate),
             node_registry_view=staged_registry,

@@ -9,6 +9,7 @@ from .nodes import NodeRegistryView
 CHCBITS_PER_CHC = 100_000_000
 REWARD_NODE_FEE_TARGET_COUNT = 20_000
 REWARD_NODE_FEE_LOG_SCALE = 1_000_000
+REWARD_NODE_FEE_STALE_GRACE_EPOCHS = 2
 REWARD_NODE_MIN_REGISTER_FEE_CHIPBITS = 10_000
 REWARD_NODE_MIN_RENEW_FEE_CHIPBITS = 1_000
 
@@ -168,6 +169,30 @@ def reward_registered_node_count(registry_view: NodeRegistryView) -> int:
     """Return the count of reward-node registrations visible on-chain."""
 
     return sum(1 for record in registry_view.list_records() if record.reward_registration)
+
+
+def reward_fee_node_count(registry_view: NodeRegistryView, *, height: int, params: ConsensusParams) -> int:
+    """Return the reward-node count that drives adaptive registration and renewal fees.
+
+    Before ``reward_node_fee_recent_driver_activation_height`` this preserves the
+    legacy registry-wide count.  After activation, reward-node records are persistent
+    on-chain, but stale historical records should not reduce anti-Sybil fees
+    indefinitely.  The recent fee driver counts reward nodes renewed for the current
+    epoch or the previous two epochs, which gives operators a buffer while excluding
+    old abandoned records.
+    """
+
+    if height < 0:
+        raise ValueError("Block height cannot be negative.")
+    if height < params.reward_node_fee_recent_driver_activation_height:
+        return reward_registered_node_count(registry_view)
+    current_epoch = height // params.epoch_length_blocks
+    minimum_epoch = max(0, current_epoch - REWARD_NODE_FEE_STALE_GRACE_EPOCHS)
+    return sum(
+        1
+        for record in registry_view.list_records()
+        if record.reward_registration and (record.last_renewed_height // params.epoch_length_blocks) >= minimum_epoch
+    )
 
 
 def _approx_log2_scaled(value: int) -> int:

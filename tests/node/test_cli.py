@@ -1941,8 +1941,10 @@ def test_cli_reward_node_fees_reports_current_adaptive_schedule() -> None:
 
         assert code == 0
         assert payload["policy_version"] == "registry_log_v1"
-        assert payload["driver"] == "registered_reward_node_count"
+        assert payload["driver"] == "fee_reward_node_count"
         assert payload["registered_reward_node_count"] == 1
+        assert payload["fee_reward_node_count"] == 1
+        assert payload["active_reward_node_count"] == 0
         assert payload["register_fee_chipbits"] == service.params.register_node_fee_chipbits
         assert payload["renew_fee_chipbits"] == service.params.renew_node_fee_chipbits
 

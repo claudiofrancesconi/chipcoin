@@ -4,13 +4,16 @@ from chipcoin.consensus.economics import (
     is_epoch_reward_height,
     miner_subsidy_chipbits,
     node_reward_pool_chipbits,
+    reward_fee_node_count,
+    reward_registered_node_count,
     renew_reward_node_fee_chipbits,
     register_reward_node_fee_chipbits,
     subsidy_split_chipbits,
     total_block_subsidy_chipbits,
     total_subsidy_through_height,
 )
-from chipcoin.consensus.params import MAINNET_PARAMS
+from chipcoin.consensus.nodes import InMemoryNodeRegistryView, NodeRecord
+from chipcoin.consensus.params import MAINNET_PARAMS, TESTNET_PARAMS
 
 
 EXACT_CAP_HEIGHT = 643_297
@@ -144,3 +147,56 @@ def test_reward_node_fee_schedule_decreases_monotonically_with_registry_growth()
 
     assert register_fees == sorted(register_fees, reverse=True)
     assert renew_fees == sorted(renew_fees, reverse=True)
+
+
+def _reward_record(node_id: str, *, registered_height: int, last_renewed_height: int) -> NodeRecord:
+    return NodeRecord(
+        node_id=node_id,
+        payout_address="CHCCBRoVJkKrHGnwcMr3hxk4N4fbZeMDehU7W",
+        owner_pubkey=node_id.encode().ljust(33, b"\0")[:33],
+        registered_height=registered_height,
+        last_renewed_height=last_renewed_height,
+        node_pubkey=node_id.encode().ljust(33, b"\1")[:33],
+        declared_host=f"{node_id}.example",
+        declared_port=18444,
+        reward_registration=True,
+    )
+
+
+def test_reward_fee_node_count_preserves_legacy_count_before_activation() -> None:
+    registry = InMemoryNodeRegistryView.from_records(
+        [
+            _reward_record("active-current", registered_height=9_000, last_renewed_height=11_500),
+            _reward_record("active-previous", registered_height=9_000, last_renewed_height=11_400),
+            _reward_record("stale-old", registered_height=7_000, last_renewed_height=11_100),
+        ]
+    )
+
+    assert reward_registered_node_count(registry) == 3
+    assert reward_fee_node_count(registry, height=11_999, params=TESTNET_PARAMS) == 3
+
+
+def test_reward_fee_node_count_excludes_stale_historical_reward_records_after_activation() -> None:
+    registry = InMemoryNodeRegistryView.from_records(
+        [
+            _reward_record("active-current", registered_height=9_000, last_renewed_height=12_000),
+            _reward_record("grace-one", registered_height=9_000, last_renewed_height=11_900),
+            _reward_record("grace-two", registered_height=9_000, last_renewed_height=11_800),
+            _reward_record("stale-old", registered_height=7_000, last_renewed_height=11_700),
+        ]
+    )
+
+    assert reward_registered_node_count(registry) == 4
+    assert reward_fee_node_count(registry, height=12_001, params=TESTNET_PARAMS) == 3
+
+
+def test_reward_fee_node_count_keeps_two_epoch_grace_at_epoch_boundary() -> None:
+    registry = InMemoryNodeRegistryView.from_records(
+        [
+            _reward_record("previous-one", registered_height=9_000, last_renewed_height=11_900),
+            _reward_record("previous-two", registered_height=9_000, last_renewed_height=11_800),
+            _reward_record("older-epoch", registered_height=9_000, last_renewed_height=11_700),
+        ]
+    )
+
+    assert reward_fee_node_count(registry, height=12_000, params=TESTNET_PARAMS) == 2

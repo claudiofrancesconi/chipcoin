@@ -38,6 +38,7 @@ class ConsensusParams:
     target_block_time_activation_height: int = 0
     legacy_target_block_time_seconds: int | None = None
     pq_support_activation_height: int | None = None
+    reward_node_fee_recent_driver_activation_height: int = 0
 
 
 def target_block_time_seconds_for_height(height: int, params: ConsensusParams) -> int:
@@ -140,4 +141,5 @@ TESTNET_PARAMS = ConsensusParams(
     max_attestations_per_verifier_per_window=1,
     target_block_time_activation_height=4_500,
     legacy_target_block_time_seconds=300,
+    reward_node_fee_recent_driver_activation_height=12_000,
 )

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from functools import cmp_to_key
 
-from ..consensus.economics import reward_registered_node_count, subsidy_split_chipbits
+from ..consensus.economics import reward_fee_node_count, subsidy_split_chipbits
 from ..consensus.epoch_settlement import (
     REWARD_ATTESTATION_BUNDLE_KIND,
     REWARD_SETTLE_EPOCH_KIND,
@@ -206,7 +206,7 @@ class MiningCoordinator:
             utxo_view=InMemoryUtxoView(),
             network=network,
             node_registry_view=staged_registry,
-            reward_fee_registry_count=reward_registered_node_count(node_registry_view),
+            reward_fee_registry_count=reward_fee_node_count(node_registry_view, height=height, params=self.params),
         )
 
         while pending:

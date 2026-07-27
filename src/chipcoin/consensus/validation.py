@@ -33,6 +33,7 @@ from .epoch_settlement import (
 )
 from .economics import (
     is_epoch_reward_height,
+    reward_fee_node_count,
     renew_reward_node_fee_chipbits,
     reward_registered_node_count,
     register_reward_node_fee_chipbits,
@@ -307,7 +308,7 @@ def validate_block_stateful(block: Block, context: ValidationContext) -> int:
             reward_fee_registry_count=(
                 context.reward_fee_registry_count
                 if context.reward_fee_registry_count is not None
-                else reward_registered_node_count(context.node_registry_view)
+                else reward_fee_node_count(context.node_registry_view, height=context.height, params=context.params)
             ),
             pq_verify_observer=context.pq_verify_observer,
         )
@@ -586,7 +587,7 @@ def _transaction_failure_diagnostics(transaction: Transaction, context: Validati
         "fee_registry_count": (
             context.reward_fee_registry_count
             if context.reward_fee_registry_count is not None
-            else reward_registered_node_count(context.node_registry_view)
+            else reward_fee_node_count(context.node_registry_view, height=context.height, params=context.params)
         ),
         "active_reward_node_count": len(active_reward_records),
         "active_reward_node_ids": [record.node_id for record in active_reward_records[:25]],
@@ -724,7 +725,7 @@ def _validate_special_node_transaction_stateful(transaction: Transaction, contex
     fee_registry_count = (
         context.reward_fee_registry_count
         if context.reward_fee_registry_count is not None
-        else reward_registered_node_count(context.node_registry_view)
+        else reward_fee_node_count(context.node_registry_view, height=context.height, params=context.params)
     )
     if is_legacy_register_node_transaction(transaction):
         node_id = transaction.metadata["node_id"]

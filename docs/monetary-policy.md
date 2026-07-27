@@ -29,11 +29,14 @@ All consensus calculations must be performed in integer base units only.
 
 Reward-node registration and renewal fees are no longer fixed forever in CHC terms.
 
-Consensus now derives them deterministically from the on-chain reward-node registry size:
+Consensus now derives them deterministically from recent on-chain reward-node renewal state:
 
-- Driver: `registered_reward_node_count`
+- Driver: `fee_reward_node_count`
+- Counted records: reward-node records renewed in the current or previous two epochs
+- Historical diagnostic: `registered_reward_node_count` remains exposed, but stale records do not lower fees indefinitely
+- Testnet activation: height `12,000`; before activation, testnet fee validation uses the legacy registry-wide count
 - Curve shape: logarithmic, monotonic, integer-only
-- Target saturation point: `20,000` registered reward nodes
+- Target saturation point: `20,000` fee-counted reward nodes
 - Registration fee range: `1 CHC` down to `0.0001 CHC`
 - Renewal fee range: `0.1 CHC` down to `0.00001 CHC`
 
@@ -275,8 +278,10 @@ Must expose the live adaptive reward-node fee schedule, including:
 - `policy_version`
 - `driver`
 - `registered_reward_node_count`
+- `fee_reward_node_count`
 - `active_reward_node_count`
 - `target_registered_reward_node_count`
+- `target_fee_reward_node_count`
 - `register_fee_chipbits`
 - `register_fee_chc`
 - `renew_fee_chipbits`

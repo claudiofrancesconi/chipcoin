@@ -90,10 +90,12 @@ Reward-node lifecycle:
 Adaptive reward-node fees:
 
 - registration and renewal are no longer intended to stay fixed forever in CHC terms
-- current policy is driven by the on-chain `registered_reward_node_count`
+- current policy is driven by `fee_reward_node_count`: reward-node records renewed in the current or previous two epochs
+- `registered_reward_node_count` remains exposed as a historical registry diagnostic, but stale records no longer lower fees indefinitely
 - connected peer count is not used as a consensus fee input
 - curve shape is logarithmic and monotonic
-- the schedule saturates at `20,000` registered reward nodes
+- the schedule saturates at `20,000` fee-counted reward nodes
+- on testnet, the recent fee driver activates at height `12,000`; before that height, fee validation uses the legacy registry-wide count
 
 Fee bounds:
 
