@@ -475,7 +475,6 @@ class NodeRuntime:
 
         accepted = self.service.receive_transaction(transaction)
         self.logger.info("local tx accepted txid=%s fee_chipbits=%s", accepted.transaction.txid(), accepted.fee)
-        self._relayed_mempool_txids.add(accepted.transaction.txid())
         await self._broadcast_inventory(InventoryVector(object_type="tx", object_hash=accepted.transaction.txid()))
 
     async def announce_block(self, block) -> None:
@@ -570,7 +569,6 @@ class NodeRuntime:
         transaction = self.service.decode_raw_transaction(raw_hex)
         accepted = self.service.receive_transaction(transaction)
         self.logger.info("local tx accepted txid=%s fee_chipbits=%s", accepted.transaction.txid(), accepted.fee)
-        self._relayed_mempool_txids.add(accepted.transaction.txid())
         await self._broadcast_inventory(InventoryVector(object_type="tx", object_hash=accepted.transaction.txid()))
         return {"accepted": True, "txid": accepted.transaction.txid(), "fee": accepted.fee}
 

@@ -177,13 +177,16 @@ class MempoolManager:
 
         def readmit_fast(transaction: Transaction, *, added_at: int) -> None:
             if self._is_expired(added_at, self.time_provider()):
+                _log_reconcile_drop(transaction, reason="expired")
                 return
             try:
                 self._enforce_pre_validation_policy(transaction)
-            except ValidationError:
+            except ValidationError as exc:
+                _log_reconcile_drop(transaction, reason=str(exc))
                 return
             txid = transaction.txid()
             if self._is_known_on_chain(txid):
+                _log_reconcile_drop(transaction, reason="confirmed_on_chain")
                 return
             try:
                 self._enforce_special_node_mempool_policy(transaction, entries=pending_entries)
@@ -195,7 +198,8 @@ class MempoolManager:
                 pending_view.apply_transaction(transaction, next_height)
                 self.repository.add(transaction, fee=fee_chipbits, added_at=added_at)
                 pending_entries.append(MempoolEntry(transaction=transaction, fee=fee_chipbits, added_at=added_at))
-            except ValidationError:
+            except ValidationError as exc:
+                _log_reconcile_drop(transaction, reason=str(exc))
                 return
 
         for entry in preserved_entries:
@@ -514,3 +518,41 @@ def _txid_or_unknown(transaction: Transaction) -> str:
         return transaction.txid()
     except Exception:  # noqa: BLE001 - logging must not hide original policy failure
         return "-"
+
+
+def _log_reconcile_drop(transaction: Transaction, *, reason: str) -> None:
+    """Log special-node mempool drops during chain reconciliation."""
+
+    kind = transaction.metadata.get("kind")
+    if not kind:
+        return
+    if not is_special_node_transaction(transaction):
+        return
+    fields = _special_node_log_fields(transaction)
+    LOGGER.info(
+        "mempool reconcile dropped special-node transaction txid=%s tx_type=%s reason=%s%s",
+        _txid_or_unknown(transaction),
+        kind,
+        reason,
+        fields,
+    )
+
+
+def _special_node_log_fields(transaction: Transaction) -> str:
+    """Return compact metadata fields for special-node diagnostics."""
+
+    try:
+        if transaction.metadata.get("kind") == REWARD_ATTESTATION_BUNDLE_KIND:
+            bundle = parse_reward_attestation_bundle_metadata(transaction.metadata)
+            return (
+                f" epoch={bundle.epoch_index}"
+                f" window={bundle.bundle_window_index}"
+                f" submitter={bundle.bundle_submitter_node_id}"
+                f" attestations={len(bundle.attestations)}"
+            )
+    except Exception:  # noqa: BLE001 - diagnostics must not hide the original drop reason
+        return ""
+    node_id = transaction.metadata.get("node_id")
+    if isinstance(node_id, str) and node_id:
+        return f" node_id={node_id}"
+    return ""

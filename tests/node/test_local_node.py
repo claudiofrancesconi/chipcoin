@@ -2993,6 +2993,29 @@ def test_runtime_ignores_duplicate_mempool_transaction_relay(monkeypatch) -> Non
     asyncio.run(scenario())
 
 
+def test_runtime_keeps_local_transaction_eligible_for_periodic_relay() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            funding_outpoint = OutPoint(txid="56" * 32, index=0)
+            put_wallet_utxo(service, funding_outpoint, value=100, owner=wallet_key(0))
+            transaction = _spend_transaction(funding_outpoint, input_value=100, output_value=90)
+            runtime = NodeRuntime(service=service)
+            broadcasts: list[InventoryVector] = []
+
+            async def broadcast_inventory(item, *, exclude=None) -> None:
+                broadcasts.append(item)
+
+            runtime._broadcast_inventory = broadcast_inventory  # type: ignore[method-assign]
+
+            await runtime.submit_transaction(transaction)
+
+            assert broadcasts == [InventoryVector(object_type="tx", object_hash=transaction.txid())]
+            assert transaction.txid() not in runtime._relayed_mempool_txids
+
+    asyncio.run(scenario())
+
+
 def test_runtime_skips_recent_peer_transaction_before_validation() -> None:
     class _FakeSessionState:
         closed = False
