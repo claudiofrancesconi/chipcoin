@@ -1,4 +1,5 @@
 import {
+  AUTO_LOCK_MINUTES_OPTIONS,
   DEFAULT_AUTO_LOCK_MINUTES,
   DEFAULT_NETWORK,
   STORAGE_KEYS,
@@ -24,6 +25,7 @@ export async function loadSettings(): Promise<WalletSettings> {
     ...DEFAULT_SETTINGS,
     ...saved,
     expectedNetwork,
+    autoLockMinutes: normalizeAutoLockMinutes(saved?.autoLockMinutes),
     nodeApiBaseUrl: saved?.nodeApiBaseUrl
       ?? getSupportedNetwork(expectedNetwork).defaultNodeApiBaseUrl,
   };
@@ -31,4 +33,10 @@ export async function loadSettings(): Promise<WalletSettings> {
 
 export async function saveSettings(settings: WalletSettings): Promise<void> {
   await storageSet(STORAGE_KEYS.settings, settings);
+}
+
+function normalizeAutoLockMinutes(value: unknown): number {
+  return typeof value === "number" && AUTO_LOCK_MINUTES_OPTIONS.includes(value as typeof AUTO_LOCK_MINUTES_OPTIONS[number])
+    ? value
+    : DEFAULT_AUTO_LOCK_MINUTES;
 }

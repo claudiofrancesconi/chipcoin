@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import type { AppState } from "../../state/app_state";
-import { SUPPORTED_NETWORKS, getSupportedNetwork, type SupportedNetworkId } from "../../shared/constants";
+import { AUTO_LOCK_MINUTES_OPTIONS, SUPPORTED_NETWORKS, getSupportedNetwork, type SupportedNetworkId } from "../../shared/constants";
 import { sendWalletMessage } from "../../shared/messages";
 import type { ConnectedSite } from "../../provider/types";
 
@@ -10,6 +10,7 @@ export function Settings(
 ): JSX.Element {
   const [nodeApiBaseUrl, setNodeApiBaseUrl] = useState(state.nodeApiBaseUrl);
   const [expectedNetwork, setExpectedNetwork] = useState<SupportedNetworkId>(state.expectedNetwork);
+  const [autoLockMinutes, setAutoLockMinutes] = useState(state.autoLockMinutes);
   const [message, setMessage] = useState<string | null>(null);
   const [connectedSites, setConnectedSites] = useState<ConnectedSite[]>([]);
   const selectedNetwork = getSupportedNetwork(expectedNetwork);
@@ -27,9 +28,14 @@ export function Settings(
 
   async function handleSave(): Promise<void> {
     try {
-      const nextState = await sendWalletMessage<AppState>({ type: "wallet:updateNode", nodeApiBaseUrl, expectedNetwork });
+      const nextState = await sendWalletMessage<AppState>({
+        type: "wallet:updateNode",
+        nodeApiBaseUrl,
+        expectedNetwork,
+        autoLockMinutes,
+      });
       onUpdated(nextState);
-      setMessage(`Node endpoint updated for ${selectedNetwork.label}.`);
+      setMessage(`Settings updated for ${selectedNetwork.label}.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to update node endpoint.");
     }
@@ -85,7 +91,15 @@ export function Settings(
           <p className="message">Advanced/operator local node API: <span className="mono">{selectedNetwork.localNodeApiBaseUrl}</span></p>
         ) : null}
         <p className="message">{selectedNetwork.httpSafetyNote}</p>
-        <button className="primary-button" onClick={() => void handleSave()}>Save network endpoint</button>
+        <label className="stack">
+          <span>Auto-lock</span>
+          <select value={autoLockMinutes} onChange={(event) => setAutoLockMinutes(Number(event.target.value))}>
+            {AUTO_LOCK_MINUTES_OPTIONS.map((minutes) => (
+              <option key={minutes} value={minutes}>{minutes} minutes</option>
+            ))}
+          </select>
+        </label>
+        <button className="primary-button" onClick={() => void handleSave()}>Save settings</button>
         <button className="secondary-button" onClick={onOpenBackup}>Open backup / export</button>
         <button onClick={() => void handleLock()}>Lock wallet</button>
         <button className="danger-button" onClick={() => void handleRemoveWallet()}>Remove wallet</button>

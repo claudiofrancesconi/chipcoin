@@ -97,7 +97,7 @@ async function handleMessage(message: BackgroundRequest, sender: chrome.runtime.
           },
         };
       case "wallet:updateNode":
-        return { ok: true, payload: await updateNodeEndpoint(message.nodeApiBaseUrl, message.expectedNetwork) };
+        return { ok: true, payload: await updateNodeEndpoint(message.nodeApiBaseUrl, message.expectedNetwork, message.autoLockMinutes) };
       case "wallet:refresh":
         return { ok: true, payload: await refreshWalletData() };
       case "wallet:addWatchOnlyAddress":

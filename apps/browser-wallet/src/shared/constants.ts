@@ -12,7 +12,8 @@ export interface SupportedNetworkConfig {
 }
 
 export const MIN_PASSWORD_LENGTH = 10;
-export const DEFAULT_AUTO_LOCK_MINUTES = 15;
+export const DEFAULT_AUTO_LOCK_MINUTES = 30;
+export const AUTO_LOCK_MINUTES_OPTIONS = [5, 15, 30, 60, 120] as const;
 declare const __CHIPCOIN_DEFAULT_NODE_ENDPOINT__: string;
 declare const __CHIPCOIN_DEFAULT_EXPLORER_URL__: string;
 export const DEFAULT_NODE_ENDPOINT = __CHIPCOIN_DEFAULT_NODE_ENDPOINT__;

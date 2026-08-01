@@ -28,6 +28,7 @@ import {
 } from "../wallet/submitted_cache";
 import { extensionAlarms } from "../shared/browser";
 import {
+  AUTO_LOCK_MINUTES_OPTIONS,
   API_TIMEOUTS_MS,
   DEFAULT_AUTO_LOCK_MINUTES,
   SUBMITTED_TX_POLL_ALARM,
@@ -200,15 +201,27 @@ export async function exportRecoveryPhrase(args: { password?: string; confirmAct
   return secret.recoveryPhrase;
 }
 
-export async function updateNodeEndpoint(nodeApiBaseUrl: string, expectedNetwork: SupportedNetworkId): Promise<AppState> {
+export async function updateNodeEndpoint(
+  nodeApiBaseUrl: string,
+  expectedNetwork: SupportedNetworkId,
+  autoLockMinutes?: number,
+): Promise<AppState> {
   await touchSession();
   const settings = await loadSettings();
   const network = getSupportedNetwork(expectedNetwork);
   const normalized = normalizeNodeEndpoint(nodeApiBaseUrl);
   const client = ChipcoinApiClient.fromBaseUrl(normalized);
   await validateClientNetwork(client, network.id);
-  const nextSettings = { ...settings, nodeApiBaseUrl: normalized, expectedNetwork: network.id };
+  const nextSettings = {
+    ...settings,
+    nodeApiBaseUrl: normalized,
+    expectedNetwork: network.id,
+    autoLockMinutes: normalizeAutoLockMinutes(autoLockMinutes ?? settings.autoLockMinutes),
+  };
   await saveSettings(nextSettings);
+  if (activeSession) {
+    await scheduleAutoLock(nextSettings.autoLockMinutes);
+  }
   const walletRecord = await loadWalletRecord();
   if (walletRecord) {
     await reconcileSubmittedTransactions(nextSettings, walletRecord.address, { forceCheckAll: true });
@@ -508,7 +521,7 @@ function makeUnlockedSession(
 
 async function scheduleAutoLock(autoLockMinutes: number): Promise<void> {
   extensionAlarms().clear(AUTO_LOCK_ALARM);
-  extensionAlarms().create(AUTO_LOCK_ALARM, { delayInMinutes: autoLockMinutes || DEFAULT_AUTO_LOCK_MINUTES });
+  extensionAlarms().create(AUTO_LOCK_ALARM, { delayInMinutes: normalizeAutoLockMinutes(autoLockMinutes) });
 }
 
 async function touchSession(): Promise<void> {
@@ -522,6 +535,12 @@ async function touchSession(): Promise<void> {
     expiresAt,
   };
   await scheduleAutoLock(settings.autoLockMinutes);
+}
+
+function normalizeAutoLockMinutes(value: number): number {
+  return AUTO_LOCK_MINUTES_OPTIONS.includes(value as typeof AUTO_LOCK_MINUTES_OPTIONS[number])
+    ? value
+    : DEFAULT_AUTO_LOCK_MINUTES;
 }
 
 async function buildOverview(

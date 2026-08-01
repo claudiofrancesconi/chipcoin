@@ -35,7 +35,7 @@ export type BackgroundRequest =
   | { type: "wallet:remove" }
   | { type: "wallet:exportPrivateKey"; password?: string; confirmActiveSession?: boolean }
   | { type: "wallet:exportRecoveryPhrase"; password?: string; confirmActiveSession?: boolean }
-  | { type: "wallet:updateNode"; nodeApiBaseUrl: string; expectedNetwork: SupportedNetworkId }
+  | { type: "wallet:updateNode"; nodeApiBaseUrl: string; expectedNetwork: SupportedNetworkId; autoLockMinutes?: number }
   | { type: "wallet:refresh" }
   | { type: "wallet:addWatchOnlyAddress"; address: string; label?: string }
   | { type: "wallet:removeWatchOnlyAddress"; address: string }
