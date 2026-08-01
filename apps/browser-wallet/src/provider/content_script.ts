@@ -43,7 +43,6 @@ function injectPageProvider(): void {
     return;
   }
   const script = document.createElement("script");
-  script.type = "module";
   script.src = runtime.getURL("assets/page_provider.js");
   script.onload = () => script.remove();
   (document.head || document.documentElement).append(script);

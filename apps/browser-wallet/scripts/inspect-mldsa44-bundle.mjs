@@ -65,6 +65,11 @@ assert(!csp.includes("wasm-unsafe-eval"), "manifest CSP contains wasm-unsafe-eva
 const contentScript = readFileSync(join(distDir, "assets", "content_script.js"), "utf8");
 assert(!/^\s*import\b/m.test(contentScript), "content_script.js must not contain ESM imports");
 assert(!/^\s*export\b/m.test(contentScript), "content_script.js must not contain ESM exports");
+assert(!contentScript.includes(".type=\"module\""), "content_script.js must inject page_provider.js as a classic script");
+
+const pageProvider = readFileSync(join(distDir, "assets", "page_provider.js"), "utf8");
+assert(!/^\s*import\b/m.test(pageProvider), "page_provider.js must not contain ESM imports");
+assert(!/^\s*export\b/m.test(pageProvider), "page_provider.js must not contain ESM exports");
 
 console.log(JSON.stringify({
   ok: true,
