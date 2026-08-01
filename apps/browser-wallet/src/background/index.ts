@@ -21,6 +21,12 @@ import {
   updateNodeEndpoint,
 } from "./session";
 import { extensionAlarms, extensionRuntime } from "../shared/browser";
+import { loadConnectedSites, revokeConnectedSite } from "../provider/permissions";
+import {
+  getPendingProviderApproval,
+  handleProviderRuntimeRequest,
+  respondToProviderApproval,
+} from "./provider";
 
 const runtime = extensionRuntime();
 
@@ -29,8 +35,8 @@ runtime.onStartup?.addListener(() => {
   void initializeBackground();
 });
 
-runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendResponse) => {
-  void handleMessage(message).then(sendResponse);
+runtime.onMessage.addListener((message: BackgroundRequest, sender, sendResponse) => {
+  void handleMessage(message, sender).then(sendResponse);
   return true;
 });
 
@@ -38,9 +44,18 @@ extensionAlarms().onAlarm.addListener((alarm) => {
   void handleAutoLockAlarm(alarm.name);
 });
 
-async function handleMessage(message: BackgroundRequest): Promise<BackgroundResponse<unknown>> {
+async function handleMessage(message: BackgroundRequest, sender: chrome.runtime.MessageSender): Promise<BackgroundResponse<unknown> | unknown> {
   try {
     switch (message.type) {
+      case "provider:request":
+        return handleProviderRuntimeRequest(message, sender);
+      case "provider:approval:get": {
+        const pending = getPendingProviderApproval(message.approvalId);
+        return pending ? { ok: true, payload: pending } : { ok: false, error: "Approval request expired or was already handled." };
+      }
+      case "provider:approval:respond":
+        respondToProviderApproval(message.approvalId, message.approved);
+        return { ok: true, payload: { approved: message.approved } };
       case "wallet:getState":
         return { ok: true, payload: await getAppState() };
       case "wallet:getHistory":
@@ -91,6 +106,10 @@ async function handleMessage(message: BackgroundRequest): Promise<BackgroundResp
         return { ok: true, payload: await removeWatchOnlyAddress(message.address) };
       case "wallet:submit":
         return { ok: true, payload: await submitTransaction(message) };
+      case "wallet:listConnectedSites":
+        return { ok: true, payload: await loadConnectedSites() };
+      case "wallet:revokeConnectedSite":
+        return { ok: true, payload: await revokeConnectedSite(message.origin) };
       default:
         return { ok: false, error: "Unsupported wallet action." };
     }

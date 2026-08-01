@@ -170,6 +170,23 @@ select {
   color: #ffb3b3;
 }
 
+.details-list {
+  display: grid;
+  gap: 6px 10px;
+  grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
+  margin: 0;
+}
+
+.details-list dt {
+  color: #d8cfbf;
+}
+
+.details-list dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .network-strip {
   background: rgba(216, 168, 76, 0.1);
   border: 1px solid rgba(216, 168, 76, 0.22);

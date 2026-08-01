@@ -68,7 +68,10 @@ export default defineConfig(({ mode }) => {
         popup: resolve(__dirname, "popup.html"),
         onboarding: resolve(__dirname, "onboarding.html"),
         settings: resolve(__dirname, "settings.html"),
+        approval: resolve(__dirname, "approval.html"),
         background: resolve(__dirname, "src/background/index.ts"),
+        content_script: resolve(__dirname, "src/provider/content_script.ts"),
+        page_provider: resolve(__dirname, "src/provider/page_provider.ts"),
       },
       output: {
         entryFileNames: "assets/[name].js",

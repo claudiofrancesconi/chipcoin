@@ -117,4 +117,33 @@ describe("wallet session security", () => {
     });
     await expect(loadWatchOnlyAddressRecords()).resolves.toEqual([]);
   });
+
+  it("refuses provider login signing after the wallet auto-locks", async () => {
+    const session = await import("../../src/background/session");
+    const { privateKeyHexToAddress } = await import("../../src/crypto/addresses");
+
+    const privateKeyHex = "0000000000000000000000000000000000000000000000000000000000000001";
+    const address = privateKeyHexToAddress(privateKeyHex);
+    const issuedAt = new Date(Date.now()).toISOString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    await session.importWallet(privateKeyHex, "phase12-password");
+    await session.lockWallet();
+
+    await expect(session.signProviderLoginMessage({
+      origin: "https://chipcoinprotocol.com",
+      domain: "chipcoinprotocol.com",
+      message: [
+        "Chipcoin Signed Login v1",
+        "Domain: chipcoinprotocol.com",
+        "Origin: https://chipcoinprotocol.com",
+        "Network: testnet",
+        `Address: ${address}`,
+        "Scheme: 0",
+        "Nonce: auto-lock-test",
+        `Issued At: ${issuedAt}`,
+        `Expires At: ${expiresAt}`,
+        "Statement: Sign in to chipcoinprotocol.com",
+      ].join("\n"),
+    })).rejects.toThrow("WALLET_LOCKED");
+  });
 });

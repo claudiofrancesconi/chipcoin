@@ -5,6 +5,13 @@ import { privateKeyHexToAddress } from "../crypto/addresses";
 import { decryptPrivateKeyHex, decryptWalletSecret, encryptPrivateKeyHex, encryptWalletSecret } from "../crypto/encryption";
 import { buildWalletKeyMaterial, generatePrivateKeyHex, normalizePrivateKeyHex } from "../crypto/keys";
 import {
+  assertPublicKeyMatchesAddress,
+  parseChipcoinSignedLoginMessage,
+  signLoginMessage,
+  validateLoginOriginBinding,
+} from "../provider/login_message";
+import type { ChipcoinSignedLoginResponse } from "../provider/types";
+import {
   RECOVERY_PHRASE_WORD_COUNT,
   derivePrivateKeyHexFromRecoveryPhrase,
   generateRecoveryPhrase,
@@ -359,6 +366,47 @@ export async function getAppState(): Promise<AppState> {
     nodeStatus: overview.status,
     overview,
     watchOnlyAddresses,
+  };
+}
+
+export async function getProviderAddress(): Promise<string> {
+  const walletRecord = await loadWalletRecord();
+  if (!walletRecord) {
+    throw new Error("WALLET_NOT_FOUND");
+  }
+  return walletRecord.address;
+}
+
+export async function signProviderLoginMessage(args: {
+  message: string;
+  origin: string;
+  domain?: string;
+}): Promise<ChipcoinSignedLoginResponse> {
+  const walletRecord = await loadWalletRecord();
+  if (!walletRecord) {
+    throw new Error("WALLET_NOT_FOUND");
+  }
+  if (!activeSession) {
+    throw new Error("WALLET_LOCKED");
+  }
+  const settings = await loadSettings();
+  if (settings.expectedNetwork !== "testnet") {
+    throw new Error("UNSUPPORTED_NETWORK");
+  }
+
+  const parsed = parseChipcoinSignedLoginMessage(args.message);
+  validateLoginOriginBinding(parsed, args.origin, args.domain);
+  if (parsed.address !== activeSession.address || parsed.address !== walletRecord.address) {
+    throw new Error("ADDRESS_MISMATCH");
+  }
+  assertPublicKeyMatchesAddress(activeSession.publicKeyHex, parsed.address);
+  await touchSession();
+  return {
+    address: activeSession.address,
+    signature_scheme: 0,
+    public_key: activeSession.publicKeyHex,
+    signature: signLoginMessage(activeSession.privateKeyHex, args.message),
+    message: args.message,
   };
 }
 

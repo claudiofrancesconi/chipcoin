@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Chipcoin Signed Login Provider Test</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 24px; max-width: 820px; }
+      button { margin-right: 8px; padding: 8px 12px; }
+      textarea, pre { box-sizing: border-box; width: 100%; }
+      textarea { min-height: 190px; }
+      pre { background: #f4f4f4; padding: 12px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>Chipcoin Signed Login Provider Test</h1>
+    <p>Serve this file over HTTP, load the extension, then run connect, address, and sign. The message uses the current origin by default because the wallet must reject origin mismatches.</p>
+    <p>
+      <button id="connect">Connect</button>
+      <button id="address">Get address</button>
+      <button id="build">Build message</button>
+      <button id="sign">Sign message</button>
+    </p>
+    <textarea id="message" spellcheck="false"></textarea>
+    <pre id="output">Waiting for window.chipcoin...</pre>
+    <script>
+      const output = document.getElementById("output");
+      const messageBox = document.getElementById("message");
+      let currentAddress = "";
+
+      function log(value) {
+        output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+      }
+
+      async function request(method, params) {
+        if (!window.chipcoin) {
+          throw new Error("window.chipcoin is not available.");
+        }
+        const result = await window.chipcoin.request({ method, params });
+        log(result);
+        return result;
+      }
+
+      function buildMessage(address) {
+        const issued = new Date();
+        const expires = new Date(issued.getTime() + 10 * 60 * 1000);
+        const domain = location.hostname;
+        return [
+          "Chipcoin Signed Login v1",
+          `Domain: ${domain}`,
+          `Origin: ${location.origin}`,
+          "Network: testnet",
+          `Address: ${address}`,
+          "Scheme: 0",
+          `Nonce: ${crypto.randomUUID()}`,
+          `Issued At: ${issued.toISOString()}`,
+          `Expires At: ${expires.toISOString()}`,
+          `Statement: Sign in to ${domain}`,
+        ].join("\n");
+      }
+
+      document.getElementById("connect").onclick = async () => {
+        const result = await request("chipcoin_connect");
+        currentAddress = result.address;
+      };
+      document.getElementById("address").onclick = async () => {
+        const result = await request("chipcoin_getAddress");
+        currentAddress = result.address;
+      };
+      document.getElementById("build").onclick = () => {
+        if (!currentAddress) {
+          log("Call connect or getAddress first.");
+          return;
+        }
+        messageBox.value = buildMessage(currentAddress);
+      };
+      document.getElementById("sign").onclick = async () => {
+        await request("chipcoin_signMessage", {
+          message: messageBox.value,
+          domain: location.hostname,
+        });
+      };
+
+      window.addEventListener("chipcoin_providerReady", () => log("window.chipcoin is ready."));
+      if (window.chipcoin) {
+        log("window.chipcoin is ready.");
+      }
+    </script>
+  </body>
+</html>

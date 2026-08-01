@@ -14,6 +14,20 @@
     "type": "module"
   },
   "options_page": "settings.html",
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["assets/content_script.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/page_provider.js"],
+      "matches": ["http://*/*", "https://*/*"]
+    }
+  ],
   "permissions": ["storage", "alarms"],
   "host_permissions": ["http://*/*", "https://*/*"]
 }

@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { AppState } from "../../state/app_state";
 import { SUPPORTED_NETWORKS, getSupportedNetwork, type SupportedNetworkId } from "../../shared/constants";
 import { sendWalletMessage } from "../../shared/messages";
+import type { ConnectedSite } from "../../provider/types";
 
 export function Settings(
   { state, onUpdated, onOpenBackup }: { state: AppState; onUpdated(state: AppState): void; onOpenBackup(): void },
@@ -10,7 +11,12 @@ export function Settings(
   const [nodeApiBaseUrl, setNodeApiBaseUrl] = useState(state.nodeApiBaseUrl);
   const [expectedNetwork, setExpectedNetwork] = useState<SupportedNetworkId>(state.expectedNetwork);
   const [message, setMessage] = useState<string | null>(null);
+  const [connectedSites, setConnectedSites] = useState<ConnectedSite[]>([]);
   const selectedNetwork = getSupportedNetwork(expectedNetwork);
+
+  useEffect(() => {
+    void loadConnectedSites();
+  }, []);
 
   function handleNetworkChange(networkId: SupportedNetworkId): void {
     const network = getSupportedNetwork(networkId);
@@ -43,6 +49,20 @@ export function Settings(
     onUpdated(nextState);
   }
 
+  async function loadConnectedSites(): Promise<void> {
+    try {
+      setConnectedSites(await sendWalletMessage<ConnectedSite[]>({ type: "wallet:listConnectedSites" }));
+    } catch {
+      setConnectedSites([]);
+    }
+  }
+
+  async function handleRevoke(origin: string): Promise<void> {
+    const next = await sendWalletMessage<ConnectedSite[]>({ type: "wallet:revokeConnectedSite", origin });
+    setConnectedSites(next);
+    setMessage(`Disconnected ${origin}.`);
+  }
+
   return (
     <section className="panel">
       <h2>Settings</h2>
@@ -70,6 +90,22 @@ export function Settings(
         <button onClick={() => void handleLock()}>Lock wallet</button>
         <button className="danger-button" onClick={() => void handleRemoveWallet()}>Remove wallet</button>
       </div>
+      <h3>Connected sites</h3>
+      {connectedSites.length === 0 ? (
+        <p className="message">No connected sites.</p>
+      ) : (
+        <div className="stack">
+          {connectedSites.map((site) => (
+            <div className="inline-row" key={site.origin}>
+              <p>
+                <span className="mono">{site.origin}</span><br />
+                <span className="message">Last used {new Date(site.lastUsedAt).toLocaleString()}</span>
+              </p>
+              <button className="danger-button" onClick={() => void handleRevoke(site.origin)}>Revoke</button>
+            </div>
+          ))}
+        </div>
+      )}
       {message ? <p className="message">{message}</p> : null}
     </section>
   );
