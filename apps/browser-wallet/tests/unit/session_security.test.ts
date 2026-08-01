@@ -10,28 +10,71 @@ describe("wallet session security", () => {
   beforeEach(() => {
     vi.resetModules();
 
-    const storage = new Map<string, unknown>();
-    const local: InMemoryStorageArea = {
-      get: (key, callback) => callback({ [key]: storage.get(key) }),
-      set: (items, callback) => {
-        for (const [key, value] of Object.entries(items)) {
-          storage.set(key, value);
-        }
-        callback();
-      },
-      remove: (key, callback) => {
-        storage.delete(key);
-        callback();
-      },
-    };
+    function makeStorageArea(storage: Map<string, unknown>): InMemoryStorageArea {
+      return {
+        get: (key, callback) => callback({ [key]: storage.get(key) }),
+        set: (items, callback) => {
+          for (const [key, value] of Object.entries(items)) {
+            storage.set(key, value);
+          }
+          callback();
+        },
+        remove: (key, callback) => {
+          storage.delete(key);
+          callback();
+        },
+      };
+    }
+
+    const localStorage = new Map<string, unknown>();
+    const sessionStorage = new Map<string, unknown>();
+    const local = makeStorageArea(localStorage);
+    const session = makeStorageArea(sessionStorage);
 
     (globalThis as { chrome?: unknown }).chrome = {
-      storage: { local },
+      storage: { local, session },
       alarms: {
         create: vi.fn(),
         clear: vi.fn(),
       },
     };
+  });
+
+  it("restores the unlocked session after a service worker restart", async () => {
+    const session = await import("../../src/background/session");
+    const { privateKeyHexToAddress } = await import("../../src/crypto/addresses");
+
+    const privateKeyHex = "0000000000000000000000000000000000000000000000000000000000000001";
+    const address = privateKeyHexToAddress(privateKeyHex);
+    const issuedAt = new Date(Date.now()).toISOString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const message = [
+      "Chipcoin Signed Login v1",
+      "Domain: chipcoinprotocol.com",
+      "Origin: https://chipcoinprotocol.com",
+      "Network: testnet",
+      `Address: ${address}`,
+      "Scheme: 0",
+      "Nonce: service-worker-restart-test",
+      `Issued At: ${issuedAt}`,
+      `Expires At: ${expiresAt}`,
+      "Statement: Sign in to chipcoinprotocol.com",
+    ].join("\n");
+
+    await session.importWallet(privateKeyHex, "phase12-password");
+
+    vi.resetModules();
+
+    const restartedSession = await import("../../src/background/session");
+    await expect(restartedSession.signProviderLoginMessage({
+      origin: "https://chipcoinprotocol.com",
+      domain: "chipcoinprotocol.com",
+      message,
+    })).resolves.toMatchObject({
+      address,
+      signature_scheme: 0,
+      message,
+    });
   });
 
   it("requires explicit confirmation before revealing a private key from an active session", async () => {

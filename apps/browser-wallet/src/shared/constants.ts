@@ -68,6 +68,7 @@ export const STORAGE_KEYS = {
   walletDataCache: "chipcoin.walletDataCache",
   watchOnlyAddresses: "chipcoin.watchOnlyAddresses",
   connectedSites: "chipcoin.connectedSites",
+  unlockedSession: "chipcoin.unlockedSession",
 } as const;
 
 export function isSupportedNetwork(value: string): value is SupportedNetworkId {

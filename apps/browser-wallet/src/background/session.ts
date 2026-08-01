@@ -26,12 +26,13 @@ import {
   markSubmittedTransactionConfirmed,
   upsertSubmittedTransaction,
 } from "../wallet/submitted_cache";
-import { extensionAlarms } from "../shared/browser";
+import { extensionAlarms, sessionStorageGet, sessionStorageRemove, sessionStorageSet } from "../shared/browser";
 import {
   AUTO_LOCK_MINUTES_OPTIONS,
   API_TIMEOUTS_MS,
   DEFAULT_AUTO_LOCK_MINUTES,
   SUBMITTED_TX_POLL_ALARM,
+  STORAGE_KEYS,
   WALLET_FORMAT_VERSION,
   getSupportedNetwork,
   type SupportedNetworkId,
@@ -75,9 +76,11 @@ export async function initializeBackground(): Promise<void> {
   const [walletRecord, settings] = await Promise.all([loadWalletRecord(), loadSettings()]);
   if (!walletRecord) {
     extensionAlarms().clear(SUBMITTED_TX_POLL_ALARM);
+    await clearActiveSession();
     await clearAllWalletDataCaches();
     return;
   }
+  await loadActiveSession(walletRecord);
   await reconcileSubmittedTransactions(settings, walletRecord.address, { forceCheckAll: true });
   await refreshWalletDataCache(settings, walletRecord.address, { includeHistory: false });
 }
@@ -121,31 +124,32 @@ export async function unlockWallet(password: string): Promise<AppState> {
     if (!secret.privateKeyHex) {
       throw new Error("Wallet payload does not include a private key.");
     }
-    activeSession = makeUnlockedSession({ walletType: "private_key", privateKeyHex: secret.privateKeyHex }, settings.autoLockMinutes, record.accountIndex);
+    await setActiveSession(makeUnlockedSession({ walletType: "private_key", privateKeyHex: secret.privateKeyHex }, settings.autoLockMinutes, record.accountIndex));
   } else {
     if (!secret.recoveryPhrase) {
       throw new Error("Wallet payload does not include a recovery phrase.");
     }
-    activeSession = makeUnlockedSession(
+    await setActiveSession(makeUnlockedSession(
       { walletType: "seed_phrase", recoveryPhrase: secret.recoveryPhrase, accountIndex: secret.accountIndex },
       settings.autoLockMinutes,
       record.accountIndex,
-    );
+    ));
   }
+  const session = await requireActiveSession();
   await scheduleAutoLock(settings.autoLockMinutes);
-  await reconcileSubmittedTransactions(settings, activeSession.address, { forceCheckAll: true });
-  await refreshWalletDataCache(settings, activeSession.address, { includeHistory: false });
+  await reconcileSubmittedTransactions(settings, session.address, { forceCheckAll: true });
+  await refreshWalletDataCache(settings, session.address, { includeHistory: false });
   return getAppState();
 }
 
 export async function lockWallet(): Promise<AppState> {
-  activeSession = null;
+  await clearActiveSession();
   extensionAlarms().clear(AUTO_LOCK_ALARM);
   return getAppState();
 }
 
 export async function removeWallet(): Promise<AppState> {
-  activeSession = null;
+  await clearActiveSession();
   extensionAlarms().clear(AUTO_LOCK_ALARM);
   extensionAlarms().clear(SUBMITTED_TX_POLL_ALARM);
   await clearWalletRecord();
@@ -156,12 +160,13 @@ export async function removeWallet(): Promise<AppState> {
 }
 
 export async function exportPrivateKey(args: { password?: string; confirmActiveSession?: boolean }): Promise<string> {
-  if (activeSession) {
+  const session = await loadActiveSession();
+  if (session) {
     if (!args.confirmActiveSession) {
       throw new Error("Explicit confirmation is required before revealing the private key.");
     }
     await touchSession();
-    return activeSession.privateKeyHex;
+    return session.privateKeyHex;
   }
   if (!args.password) {
     throw new Error("Password is required to export the private key while locked.");
@@ -171,15 +176,16 @@ export async function exportPrivateKey(args: { password?: string; confirmActiveS
 }
 
 export async function exportRecoveryPhrase(args: { password?: string; confirmActiveSession?: boolean }): Promise<string> {
-  if (activeSession?.walletType === "seed_phrase") {
+  const session = await loadActiveSession();
+  if (session?.walletType === "seed_phrase") {
     if (!args.confirmActiveSession) {
       throw new Error("Explicit confirmation is required before revealing the recovery phrase.");
     }
     await touchSession();
-    if (!activeSession.recoveryPhrase) {
+    if (!session.recoveryPhrase) {
       throw new Error("Recovery phrase is unavailable for this wallet.");
     }
-    return activeSession.recoveryPhrase;
+    return session.recoveryPhrase;
   }
   const record = await requireWalletRecord();
   if (record.walletType !== "seed_phrase") {
@@ -219,7 +225,7 @@ export async function updateNodeEndpoint(
     autoLockMinutes: normalizeAutoLockMinutes(autoLockMinutes ?? settings.autoLockMinutes),
   };
   await saveSettings(nextSettings);
-  if (activeSession) {
+  if (await loadActiveSession()) {
     await scheduleAutoLock(nextSettings.autoLockMinutes);
   }
   const walletRecord = await loadWalletRecord();
@@ -233,9 +239,10 @@ export async function updateNodeEndpoint(
 export async function refreshWalletData(): Promise<AppState> {
   await touchSession();
   const settings = await loadSettings();
-  if (activeSession) {
-    await reconcileSubmittedTransactions(settings, activeSession.address, { forceCheckAll: true });
-    await refreshWalletDataCache(settings, activeSession.address, { includeHistory: false });
+  const session = await loadActiveSession();
+  if (session) {
+    await reconcileSubmittedTransactions(settings, session.address, { forceCheckAll: true });
+    await refreshWalletDataCache(settings, session.address, { includeHistory: false });
   }
   return getAppState();
 }
@@ -295,7 +302,8 @@ export async function submitTransaction(args: {
   amountChipbits: number;
   feeChipbits: number;
 }): Promise<{ status: "submitted" | "rejected" | "failed_to_submit"; txid?: string }> {
-  if (!activeSession) {
+  const session = await loadActiveSession();
+  if (!session) {
     throw new Error("Unlock the wallet before sending transactions.");
   }
   await touchSession();
@@ -305,10 +313,10 @@ export async function submitTransaction(args: {
 
   try {
     await validateClientNetwork(client, settings.expectedNetwork);
-    const utxos = await client.utxos(activeSession.address);
+    const utxos = await client.utxos(session.address);
     built = buildSignedPaymentTransaction({
-      privateKeyHex: activeSession.privateKeyHex,
-      walletAddress: activeSession.address,
+      privateKeyHex: session.privateKeyHex,
+      walletAddress: session.address,
       recipient: args.recipient,
       amountChipbits: args.amountChipbits,
       feeChipbits: args.feeChipbits,
@@ -322,7 +330,7 @@ export async function submitTransaction(args: {
       amountChipbits: args.amountChipbits,
       feeChipbits: args.feeChipbits,
     }));
-    await refreshWalletDataCache(settings, activeSession.address, { includeHistory: true });
+    await refreshWalletDataCache(settings, session.address, { includeHistory: true });
     await scheduleSubmittedTransactionPolling();
     return { status: "submitted", txid: built.txid };
   } catch (error) {
@@ -356,6 +364,7 @@ export async function submitTransaction(args: {
 export async function getAppState(): Promise<AppState> {
   await touchSession();
   const [walletRecord, settings] = await Promise.all([loadWalletRecord(), loadSettings()]);
+  const session = await loadActiveSession(walletRecord);
   const [submittedTransactions, walletDataCache, watchOnlyRecords] = await Promise.all([
     loadSubmittedTransactions(settings.expectedNetwork),
     loadWalletDataCache(settings.expectedNetwork),
@@ -368,7 +377,7 @@ export async function getAppState(): Promise<AppState> {
   ]);
   return {
     hasWallet: walletRecord !== null,
-    isLocked: activeSession === null,
+    isLocked: session === null,
     walletType: walletRecord?.walletType ?? null,
     accountIndex: walletRecord?.accountIndex ?? null,
     recoveryPhraseWordCount: walletRecord?.recoveryPhraseWordCount ?? null,
@@ -399,7 +408,8 @@ export async function signProviderLoginMessage(args: {
   if (!walletRecord) {
     throw new Error("WALLET_NOT_FOUND");
   }
-  if (!activeSession) {
+  const session = await loadActiveSession(walletRecord);
+  if (!session) {
     throw new Error("WALLET_LOCKED");
   }
   const settings = await loadSettings();
@@ -409,23 +419,23 @@ export async function signProviderLoginMessage(args: {
 
   const parsed = parseChipcoinSignedLoginMessage(args.message);
   validateLoginOriginBinding(parsed, args.origin, args.domain);
-  if (parsed.address !== activeSession.address || parsed.address !== walletRecord.address) {
+  if (parsed.address !== session.address || parsed.address !== walletRecord.address) {
     throw new Error("ADDRESS_MISMATCH");
   }
-  assertPublicKeyMatchesAddress(activeSession.publicKeyHex, parsed.address);
+  assertPublicKeyMatchesAddress(session.publicKeyHex, parsed.address);
   await touchSession();
   return {
-    address: activeSession.address,
+    address: session.address,
     signature_scheme: 0,
-    public_key: activeSession.publicKeyHex,
-    signature: signLoginMessage(activeSession.privateKeyHex, args.message),
+    public_key: session.publicKeyHex,
+    signature: signLoginMessage(session.privateKeyHex, args.message),
     message: args.message,
   };
 }
 
 export async function handleAutoLockAlarm(name: string): Promise<void> {
   if (name === AUTO_LOCK_ALARM) {
-    activeSession = null;
+    await clearActiveSession();
     return;
   }
   if (name === SUBMITTED_TX_POLL_ALARM) {
@@ -455,7 +465,7 @@ async function persistPrivateKeyWallet(privateKeyHex: string, password: string):
   await clearAllWalletDataCaches();
   await saveWalletRecord(record);
   const settings = await loadSettings();
-  activeSession = makeUnlockedSession({ walletType: "private_key", privateKeyHex }, settings.autoLockMinutes, 0);
+  await setActiveSession(makeUnlockedSession({ walletType: "private_key", privateKeyHex }, settings.autoLockMinutes, 0));
   await scheduleAutoLock(settings.autoLockMinutes);
   await refreshWalletDataCache(settings, record.address, { includeHistory: false });
   return getAppState();
@@ -487,11 +497,11 @@ async function persistSeedWallet(recoveryPhrase: string, password: string, accou
   await clearAllWalletDataCaches();
   await saveWalletRecord(record);
   const settings = await loadSettings();
-  activeSession = makeUnlockedSession(
+  await setActiveSession(makeUnlockedSession(
     { walletType: "seed_phrase", recoveryPhrase, accountIndex },
     settings.autoLockMinutes,
     accountIndex,
-  );
+  ));
   await scheduleAutoLock(settings.autoLockMinutes);
   await refreshWalletDataCache(settings, record.address, { includeHistory: false });
   return getAppState();
@@ -519,21 +529,69 @@ function makeUnlockedSession(
   };
 }
 
+async function setActiveSession(session: UnlockedSession): Promise<void> {
+  activeSession = session;
+  await sessionStorageSet(STORAGE_KEYS.unlockedSession, session);
+}
+
+async function clearActiveSession(): Promise<void> {
+  activeSession = null;
+  await sessionStorageRemove(STORAGE_KEYS.unlockedSession);
+}
+
+async function requireActiveSession(): Promise<UnlockedSession> {
+  const session = await loadActiveSession();
+  if (!session) {
+    throw new Error("Unlock the wallet before using it.");
+  }
+  return session;
+}
+
+async function loadActiveSession(walletRecord?: EncryptedWalletRecord | null): Promise<UnlockedSession | null> {
+  if (activeSession) {
+    if (activeSession.expiresAt > Date.now()) {
+      return activeSession;
+    }
+    await clearActiveSession();
+    return null;
+  }
+
+  const persisted = await sessionStorageGet<UnlockedSession>(STORAGE_KEYS.unlockedSession);
+  if (!persisted || persisted.expiresAt <= Date.now()) {
+    if (persisted) {
+      await clearActiveSession();
+    }
+    return null;
+  }
+
+  const record = walletRecord === undefined ? await loadWalletRecord() : walletRecord;
+  if (!record || record.address !== persisted.address || record.accountIndex !== persisted.accountIndex) {
+    await clearActiveSession();
+    return null;
+  }
+
+  activeSession = persisted;
+  const minutesUntilExpiry = Math.max((persisted.expiresAt - Date.now()) / 60_000, 0.01);
+  await scheduleAutoLock(minutesUntilExpiry);
+  return activeSession;
+}
+
 async function scheduleAutoLock(autoLockMinutes: number): Promise<void> {
   extensionAlarms().clear(AUTO_LOCK_ALARM);
-  extensionAlarms().create(AUTO_LOCK_ALARM, { delayInMinutes: normalizeAutoLockMinutes(autoLockMinutes) });
+  extensionAlarms().create(AUTO_LOCK_ALARM, { delayInMinutes: autoLockMinutes });
 }
 
 async function touchSession(): Promise<void> {
-  if (!activeSession) {
+  const session = await loadActiveSession();
+  if (!session) {
     return;
   }
   const settings = await loadSettings();
   const expiresAt = Date.now() + minutesToMilliseconds(settings.autoLockMinutes || DEFAULT_AUTO_LOCK_MINUTES);
-  activeSession = {
-    ...activeSession,
+  await setActiveSession({
+    ...session,
     expiresAt,
-  };
+  });
   await scheduleAutoLock(settings.autoLockMinutes);
 }
 

@@ -19,6 +19,12 @@ export function extensionStorage(): StorageAreaLike {
   return storage;
 }
 
+export function extensionSessionStorage(): StorageAreaLike | null {
+  return globalThis.chrome?.storage?.session
+    ?? (globalThis as { browser?: { storage?: { session?: StorageAreaLike } } }).browser?.storage?.session
+    ?? null;
+}
+
 export function extensionAlarms(): AlarmsLike {
   const alarms = globalThis.chrome?.alarms ?? (globalThis as { browser?: { alarms: AlarmsLike } }).browser?.alarms;
   if (!alarms) {
@@ -43,6 +49,36 @@ export async function storageSet<T>(key: string, value: T): Promise<void> {
 
 export async function storageRemove(key: string): Promise<void> {
   const storage = extensionStorage();
+  return new Promise<void>((resolve) => {
+    storage.remove(key, () => resolve());
+  });
+}
+
+export async function sessionStorageGet<T>(key: string): Promise<T | undefined> {
+  const storage = extensionSessionStorage();
+  if (!storage) {
+    return undefined;
+  }
+  return new Promise<T | undefined>((resolve) => {
+    storage.get(key, (result) => resolve(result[key] as T | undefined));
+  });
+}
+
+export async function sessionStorageSet<T>(key: string, value: T): Promise<void> {
+  const storage = extensionSessionStorage();
+  if (!storage) {
+    return;
+  }
+  return new Promise<void>((resolve) => {
+    storage.set({ [key]: value }, () => resolve());
+  });
+}
+
+export async function sessionStorageRemove(key: string): Promise<void> {
+  const storage = extensionSessionStorage();
+  if (!storage) {
+    return;
+  }
   return new Promise<void>((resolve) => {
     storage.remove(key, () => resolve());
   });
