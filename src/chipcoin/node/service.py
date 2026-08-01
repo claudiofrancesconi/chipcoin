@@ -4013,12 +4013,35 @@ class NodeService:
                             outgoing_chipbits += int(spent_entry.output.value)
                 if incoming_chipbits or outgoing_chipbits:
                     recipient_metadata = _address_metadata(recipient)
+                    is_coinbase = tx_index == 0
+                    mining_reward_chipbits = (
+                        int(transaction.outputs[0].value)
+                        if is_coinbase and transaction.outputs and transaction.outputs[0].recipient == recipient
+                        else 0
+                    )
+                    node_reward_chipbits = (
+                        sum(int(tx_output.value) for tx_output in transaction.outputs[1:] if tx_output.recipient == recipient)
+                        if is_coinbase
+                        else 0
+                    )
+                    reward_types: list[str] = []
+                    if mining_reward_chipbits:
+                        reward_types.append("mining_reward")
+                    if node_reward_chipbits:
+                        reward_types.append("node_reward")
+                    reward_type = reward_types[0] if len(reward_types) == 1 else ("mixed_reward" if reward_types else None)
                     rows.append(
                         {
                             "block_height": height,
                             "block_hash": block.block_hash(),
                             "txid": transaction.txid(),
                             "transaction_version": transaction.version,
+                            "tx_type": "coinbase" if is_coinbase else "transfer",
+                            "is_coinbase": is_coinbase,
+                            "reward_type": reward_type,
+                            "reward_types": reward_types,
+                            "mining_reward_chipbits": mining_reward_chipbits,
+                            "node_reward_chipbits": node_reward_chipbits,
                             "incoming_chipbits": incoming_chipbits,
                             "outgoing_chipbits": outgoing_chipbits,
                             "net_chipbits": incoming_chipbits - outgoing_chipbits,

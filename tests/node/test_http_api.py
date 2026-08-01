@@ -1145,11 +1145,12 @@ def test_http_api_address_history() -> None:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
         owner = wallet_key(0)
         recipient = wallet_key(1)
+        miner = wallet_key(2)
         funding_outpoint = OutPoint(txid="55" * 32, index=0)
         put_wallet_utxo(service, funding_outpoint, value=100, owner=owner)
         transaction = signed_payment(funding_outpoint, value=100, sender=owner, recipient=recipient.address, fee=10)
         service.receive_transaction(transaction)
-        mined = _mine_block(service.build_candidate_block("CHCminer").block)
+        mined = _mine_block(service.build_candidate_block(miner.address).block)
         service.apply_block(mined)
         app = HttpApiApp(service)
 
@@ -1159,17 +1160,38 @@ def test_http_api_address_history() -> None:
             path=f"/v1/address/{recipient.address}/history",
             query="limit=10&order=desc",
         )
+        miner_status, _, miner_body = _call_wsgi(
+            app,
+            method="GET",
+            path=f"/v1/address/{miner.address}/history",
+            query="limit=10&order=desc",
+        )
 
         assert status == "200 OK"
         assert len(body) >= 1
         assert body[0]["txid"] == transaction.txid()
         assert body[0]["transaction_version"] == 1
+        assert body[0]["tx_type"] == "transfer"
+        assert body[0]["is_coinbase"] is False
+        assert body[0]["reward_type"] is None
+        assert body[0]["reward_types"] == []
+        assert body[0]["mining_reward_chipbits"] == 0
+        assert body[0]["node_reward_chipbits"] == 0
         assert body[0]["address_kind"] == "legacy"
         assert body[0]["address_scheme_id"] == 0
         assert body[0]["input_schemes"][0]["sig_scheme_id"] == 0
         assert body[0]["input_schemes"][0]["sig_scheme_name"] == "secp256k1-ecdsa"
         assert body[0]["output_schemes"][0]["address_kind"] == "legacy"
         assert body[0]["incoming_chipbits"] > 0
+        assert miner_status == "200 OK"
+        coinbase_rows = [row for row in miner_body if row["txid"] == mined.transactions[0].txid()]
+        assert len(coinbase_rows) == 1
+        assert coinbase_rows[0]["tx_type"] == "coinbase"
+        assert coinbase_rows[0]["is_coinbase"] is True
+        assert coinbase_rows[0]["reward_type"] == "mining_reward"
+        assert coinbase_rows[0]["reward_types"] == ["mining_reward"]
+        assert coinbase_rows[0]["mining_reward_chipbits"] > 0
+        assert coinbase_rows[0]["node_reward_chipbits"] == 0
         assert "net_chipbits" in body[0]
 
 
