@@ -78,7 +78,7 @@ async function runFirefox() {
       proc.once("exit", resolveProcess);
       setTimeout(resolveProcess, 1500);
     });
-    rmSync(profile, { recursive: true, force: true });
+    removeTemporaryProfile(profile);
   }
 }
 
@@ -146,8 +146,17 @@ async function runChromium() {
       setTimeout(resolveProcess, 1500);
     });
     await staticServer.close();
-    rmSync(profile, { recursive: true, force: true });
+    removeTemporaryProfile(profile);
   }
+}
+
+function removeTemporaryProfile(profile) {
+  rmSync(profile, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
 }
 
 async function pollHarnessResult(client, context) {
