@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Chipcoin Wallet",
   "short_name": "Chipcoin",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Chipcoin devnet and testnet browser wallet",
   "homepage_url": "https://chipcoinprotocol.com/wallet",
   "action": {
@@ -19,7 +19,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
+      "matches": ["https://chipcoinprotocol.com/*"],
       "js": ["assets/content_script.js"],
       "run_at": "document_start",
       "all_frames": false
@@ -28,11 +28,12 @@
   "web_accessible_resources": [
     {
       "resources": ["assets/page_provider.js"],
-      "matches": ["http://*/*", "https://*/*"]
+      "matches": ["https://chipcoinprotocol.com/*"]
     }
   ],
   "permissions": ["storage", "alarms"],
   "host_permissions": [
+    "https://chipcoinprotocol.com/*",
     "https://testnet-api.chipcoinprotocol.com/*",
     "https://api.chipcoinprotocol.com/*",
     "http://127.0.0.1/*",
