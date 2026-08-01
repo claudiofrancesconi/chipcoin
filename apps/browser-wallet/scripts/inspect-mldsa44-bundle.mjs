@@ -62,6 +62,10 @@ const csp = JSON.stringify(manifest.content_security_policy ?? {});
 assert(!csp.includes("unsafe-eval"), "manifest CSP contains unsafe-eval");
 assert(!csp.includes("wasm-unsafe-eval"), "manifest CSP contains wasm-unsafe-eval");
 
+const contentScript = readFileSync(join(distDir, "assets", "content_script.js"), "utf8");
+assert(!/^\s*import\b/m.test(contentScript), "content_script.js must not contain ESM imports");
+assert(!/^\s*export\b/m.test(contentScript), "content_script.js must not contain ESM exports");
+
 console.log(JSON.stringify({
   ok: true,
   files: assetNames.length,

@@ -1,9 +1,10 @@
-import {
-  CHIPCOIN_PROVIDER_REQUEST,
-  CHIPCOIN_PROVIDER_RESPONSE,
-  type ChipcoinProviderRequestPayload,
-  type ChipcoinProviderResponsePayload,
+import type {
+  ChipcoinProviderRequestPayload,
+  ChipcoinProviderResponsePayload,
 } from "./types";
+
+const CHIPCOIN_PROVIDER_REQUEST = "chipcoin:provider:request";
+const CHIPCOIN_PROVIDER_RESPONSE = "chipcoin:provider:response";
 
 const runtime = globalThis.chrome?.runtime;
 
